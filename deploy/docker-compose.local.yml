@@ -1,0 +1,18 @@
+services:
+  api:
+    ports: !override
+      - "8081:8080"
+    environment:
+      SESSION_SECRET: ${SESSION_SECRET}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  worker:
+    environment:
+      SESSION_SECRET: ${SESSION_SECRET}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent}
+      LLM_MODEL: ${LLM_MODEL:-gemini-flash-latest}
+      LLM_DAILY_BUDGET_USD: ${LLM_DAILY_BUDGET_USD:-0}
+      LLM_SCORE_THRESHOLD: ${LLM_SCORE_THRESHOLD:-25}

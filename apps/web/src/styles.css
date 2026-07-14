@@ -1,0 +1,195 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
+  --color-ember: var(--ember);
+  --color-ember-foreground: var(--ember-foreground);
+  --color-lime: var(--lime);
+  --color-rule: var(--rule);
+  --color-cream: var(--cream);
+  /* Be Vietnam Pro có bộ ký tự tiếng Việt đầy đủ, nét chữ rõ ở mọi kích thước. */
+  --font-display: "Be Vietnam Pro", Arial, sans-serif;
+  --font-heading: "Be Vietnam Pro", Arial, sans-serif;
+  --font-sans: "Be Vietnam Pro", Arial, sans-serif;
+  --font-mono: "Roboto Mono", Consolas, monospace;
+}
+
+:root {
+  --radius: 0.25rem;
+
+  /* Paper & ink editorial palette */
+  --paper: oklch(0.972 0.012 82);        /* warm cream paper */
+  --cream: oklch(0.955 0.020 82);        /* slightly deeper cream for blocks */
+  --ink: oklch(0.155 0.022 55);          /* warm near-black */
+  --rule: oklch(0.155 0.022 55 / 0.16);
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--ink);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--ink);
+
+  --primary: var(--ink);
+  --primary-foreground: var(--paper);
+  --secondary: oklch(0.94 0.014 82);
+  --secondary-foreground: var(--ink);
+  --muted: oklch(0.94 0.014 82);
+  --muted-foreground: oklch(0.42 0.018 65);
+  --accent: oklch(0.92 0.018 82);
+  --accent-foreground: var(--ink);
+
+  --ember: oklch(0.64 0.20 34);          /* rich ember-brick */
+  --ember-foreground: oklch(0.99 0.01 85);
+  --lime: oklch(0.86 0.19 118);          /* electric lime */
+
+  --destructive: oklch(0.55 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: var(--rule);
+  --input: oklch(0.155 0.022 55 / 0.2);
+  --ring: var(--ember);
+}
+
+.dark {
+  --paper: oklch(0.16 0.015 60);
+  --cream: oklch(0.19 0.015 60);
+  --ink: oklch(0.97 0.008 85);
+  --rule: oklch(0.97 0.008 85 / 0.14);
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: oklch(0.2 0.015 60);
+  --card-foreground: var(--ink);
+  --muted: oklch(0.22 0.015 60);
+  --muted-foreground: oklch(0.7 0.015 70);
+  --border: var(--rule);
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html {
+    background:
+      radial-gradient(ellipse 80% 40% at 20% 0%, oklch(0.66 0.21 38 / 0.05), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 100% 30%, oklch(0.86 0.19 118 / 0.06), transparent 60%),
+      var(--color-background);
+  }
+  body {
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss02";
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    background: transparent;
+  }
+  h1, h2, h3, h4 { font-family: var(--font-display); font-feature-settings: "cv11"; }
+  ::selection { background: var(--color-ember); color: var(--color-ember-foreground); }
+}
+
+@utility label-eyebrow {
+  font-family: var(--font-heading);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+@utility rule-t { border-top: 1px solid var(--color-rule); }
+@utility rule-b { border-bottom: 1px solid var(--color-rule); }
+
+@utility rule-double-b {
+  border-bottom: 3px double var(--color-ink);
+}
+
+@utility grain {
+  position: relative;
+}
+@utility grain-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 1px 1px, oklch(0.155 0.022 55 / 0.08) 1px, transparent 0);
+  background-size: 4px 4px;
+  mix-blend-mode: multiply;
+}
+
+@utility stripes {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--color-ink) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+@utility dotgrid {
+  background-image: radial-gradient(circle, var(--color-ink) 1px, transparent 1.2px);
+  background-size: 14px 14px;
+  background-position: 0 0;
+}
+
+@utility drop-cap {
+  &::first-letter {
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-size: 4.5rem;
+    line-height: 0.85;
+    float: left;
+    padding: 0.35rem 0.65rem 0 0;
+    color: var(--color-ember);
+    font-feature-settings: "ss01";
+  }
+}
+
+@utility marquee-track {
+  display: flex;
+  gap: 3rem;
+  animation: marquee 42s linear infinite;
+  width: max-content;
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@utility ornament {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  &::before, &::after {
+    content: "";
+    height: 1px;
+    width: 1.5rem;
+    background: currentColor;
+    opacity: 0.4;
+  }
+}

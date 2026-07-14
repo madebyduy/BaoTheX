@@ -1,0 +1,35 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+apps/api/api
+apps/worker/worker
+
+# Env
+.env
+.env.local
+*.local
+
+# Go
+vendor/
+/tmp/
+coverage.out
+*.test
+*.out
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Node (web app, added later)
+apps/web/node_modules/
+apps/web/.next/
+apps/web/out/
+
+# Postgres data (if bind-mounted locally)
+deploy/pgdata/

@@ -1,0 +1,162 @@
+package ingest
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/mmcdole/gofeed"
+
+	"repwire/internal/domain"
+)
+
+// userAgent identifies our crawler per the legal requirements (spec section 22).
+const userAgent = "RepWireBot/1.0 (+https://repwire.app/bot)"
+
+// FetchResult carries fetched items plus updated conditional-GET headers.
+type FetchResult struct {
+	Items        []RawItem
+	ETag         *string
+	LastModified *string
+	NotModified  bool
+}
+
+// RSSFetcher fetches and parses standard RSS/Atom feeds.
+type RSSFetcher struct {
+	client *http.Client
+	parser *gofeed.Parser
+}
+
+// NewRSSFetcher constructs an RSSFetcher.
+func NewRSSFetcher(client *http.Client) *RSSFetcher {
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &RSSFetcher{client: client, parser: gofeed.NewParser()}
+}
+
+// Fetch retrieves the feed, honouring ETag / Last-Modified conditional GET.
+func (f *RSSFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchResult, error) {
+	feedURL := src.FeedURLOrEmpty()
+	if feedURL == "" {
+		return &FetchResult{}, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml")
+	if src.ETag != nil && *src.ETag != "" {
+		req.Header.Set("If-None-Match", *src.ETag)
+	}
+	if src.LastModified != nil && *src.LastModified != "" {
+		req.Header.Set("If-Modified-Since", *src.LastModified)
+	}
+
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotModified {
+		return &FetchResult{NotModified: true}, nil
+	}
+	if resp.StatusCode >= 400 {
+		return nil, &httpError{status: resp.StatusCode, url: feedURL}
+	}
+
+	feed, err := f.parser.Parse(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &FetchResult{}
+	if etag := resp.Header.Get("ETag"); etag != "" {
+		res.ETag = &etag
+	}
+	if lm := resp.Header.Get("Last-Modified"); lm != "" {
+		res.LastModified = &lm
+	}
+
+	for _, it := range feed.Items {
+		if it.Link == "" || it.Title == "" {
+			continue
+		}
+		raw := RawItem{
+			Type:      contentTypeForSource(src),
+			Title:     strings.TrimSpace(it.Title),
+			URL:       it.Link,
+			Published: it.PublishedParsed,
+			Language:  src.DefaultLang,
+		}
+		if body := bodyFrom(it); body != "" {
+			raw.Body = ptr(body)
+		}
+		if excerpt := excerptFrom(it); excerpt != "" {
+			raw.Excerpt = ptr(excerpt)
+		}
+		if img := imageFrom(it); img != "" {
+			raw.ImageURL = ptr(img)
+		}
+		if it.Author != nil && it.Author.Name != "" {
+			raw.Author = ptr(it.Author.Name)
+			raw.Article = &domain.Article{Author: ptr(it.Author.Name)}
+		}
+		res.Items = append(res.Items, raw)
+	}
+	return res, nil
+}
+
+// contentTypeForSource maps a source kind to the default content type.
+func contentTypeForSource(src *domain.Source) domain.ContentType {
+	switch src.Kind {
+	case domain.SourcePodcastRSS:
+		return domain.ContentPodcast
+	default:
+		return domain.ContentArticle
+	}
+}
+
+// excerptFrom builds a short plain-text excerpt (<=200 chars) from a feed item.
+func excerptFrom(it *gofeed.Item) string {
+	text := bodyFrom(it)
+	text = stripHTML(text)
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > 200 {
+		// Trim on a rune boundary.
+		r := []rune(text)
+		if len(r) > 200 {
+			r = r[:200]
+		}
+		text = strings.TrimSpace(string(r)) + "…"
+	}
+	return text
+}
+
+func bodyFrom(it *gofeed.Item) string {
+	text := it.Content
+	if text == "" {
+		text = it.Description
+	}
+	return cleanReadableText(text)
+}
+
+func imageFrom(it *gofeed.Item) string {
+	if it.Image != nil && it.Image.URL != "" {
+		return it.Image.URL
+	}
+	if len(it.Enclosures) > 0 {
+		for _, e := range it.Enclosures {
+			if strings.HasPrefix(e.Type, "image/") {
+				return e.URL
+			}
+		}
+	}
+	if match := imageTagRE.FindStringSubmatch(it.Content + "\n" + it.Description); len(match) == 2 {
+		return strings.TrimSpace(match[1])
+	}
+	return ""
+}

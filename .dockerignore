@@ -1,0 +1,13 @@
+.git
+.gitignore
+bin/
+*.exe
+.env
+.env.local
+deploy/pgdata/
+apps/web/node_modules/
+apps/web/.next/
+README.md
+*.md
+!go.mod
+!go.sum

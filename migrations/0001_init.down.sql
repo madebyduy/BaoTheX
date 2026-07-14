@@ -1,0 +1,40 @@
+-- Drop everything in reverse dependency order.
+DROP TABLE IF EXISTS llm_usage;
+DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS digest_deliveries;
+DROP TABLE IF EXISTS notification_preferences;
+DROP TABLE IF EXISTS telegram_link_codes;
+DROP TABLE IF EXISTS telegram_connections;
+DROP TABLE IF EXISTS hidden_items;
+DROP TABLE IF EXISTS reading_history;
+DROP TABLE IF EXISTS saved_items;
+DROP TABLE IF EXISTS collections;
+DROP TABLE IF EXISTS user_topic_mutes;
+DROP TABLE IF EXISTS user_source_follows;
+DROP TABLE IF EXISTS user_entity_follows;
+DROP TABLE IF EXISTS user_topic_follows;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS content_links;
+DROP TABLE IF EXISTS content_entities;
+DROP TABLE IF EXISTS entities;
+DROP TABLE IF EXISTS topic_relations;
+DROP TABLE IF EXISTS content_topics;
+DROP TABLE IF EXISTS topics;
+DROP TABLE IF EXISTS podcast_episodes;
+DROP TABLE IF EXISTS videos;
+DROP TABLE IF EXISTS research_papers;
+DROP TABLE IF EXISTS articles;
+
+DROP TRIGGER IF EXISTS trg_content_tsv ON content_items;
+DROP FUNCTION IF EXISTS content_tsv_update();
+DROP TABLE IF EXISTS content_items;
+DROP TABLE IF EXISTS sources;
+
+DROP TYPE IF EXISTS digest_kind;
+DROP TYPE IF EXISTS job_status;
+DROP TYPE IF EXISTS entity_kind;
+DROP TYPE IF EXISTS study_type;
+DROP TYPE IF EXISTS content_status;
+DROP TYPE IF EXISTS content_type;
+DROP TYPE IF EXISTS source_kind;

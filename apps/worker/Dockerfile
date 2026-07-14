@@ -1,0 +1,15 @@
+# ---- build stage ----
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/worker ./apps/worker
+
+# ---- runtime stage ----
+FROM gcr.io/distroless/static:nonroot
+COPY --from=build /out/worker /worker
+USER nonroot:nonroot
+ENTRYPOINT ["/worker"]

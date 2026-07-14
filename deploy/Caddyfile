@@ -1,0 +1,19 @@
+# RepWire reverse proxy. Replace repwire.app with your domain.
+# Caddy fetches and renews TLS certificates automatically.
+
+repwire.app {
+	encode zstd gzip
+
+	# API is served under /api/* (and the Telegram webhook).
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle /healthz {
+		reverse_proxy api:8080
+	}
+
+	# Everything else goes to the Next.js web app (added later).
+	handle {
+		reverse_proxy web:3000
+	}
+}
