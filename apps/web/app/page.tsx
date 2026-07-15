@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { api, demoItems, demoTopics, type Item, type Topic } from "./lib";
+import { api, demoItems, demoTopics, type Item, type Source, type Topic } from "./lib";
 import { Footer } from "./ui";
 import { DailyBriefPlayer } from "./daily-brief-player";
 
@@ -7,10 +7,33 @@ type HomeData = { today?: Item[]; sports?: Item[]; videos?: Item[] };
 
 export default async function Home() {
   const home = await api<HomeData>("/home", {});
-  const feed = await api<Item[]>("/content?per_page=30&sort=recent", demoItems);
+  const feed = await api<Item[]>(
+    "/content?type=article&per_page=30&sort=recent",
+    demoItems.filter((item) => item.type === "article"),
+  );
+  const [videoFeed, sources] = await Promise.all([
+    api<Item[]>("/videos?per_page=50&sort=recent", []),
+    api<Source[]>("/sources", []),
+  ]);
+  const fitnessSources = sources.filter(
+    (source) =>
+      source.kind === "youtube" &&
+      /jeff nippard|renaissance|athlean|jeremy ethier|squat university|picturefit|hypertrophy/i.test(
+        source.name,
+      ),
+  );
+  const fitnessBatches = await Promise.all(
+    fitnessSources.map((source) =>
+      api<Item[]>(`/content?type=video&source=${source.id}&per_page=4&sort=recent`, []),
+    ),
+  );
+  const fitnessVideos = diversifyVideos(uniqueItems(fitnessBatches.flat()), 8, 1);
+  const generalVideos = diversifyVideos(uniqueItems(videoFeed), 9);
   const latest = Array.from(
     new Map(
-      [...(home.today || []), ...(home.sports || []), ...feed].map((item) => [item.id, item]),
+      [...(home.today || []), ...(home.sports || []), ...feed]
+        .filter((item) => item.type === "article")
+        .map((item) => [item.id, item]),
     ).values(),
   ).slice(0, 30);
   const topics = await api<Topic[]>("/topics", demoTopics);
@@ -118,11 +141,47 @@ export default async function Home() {
           </aside>
         </div>
 
+        {generalVideos.length ? (
+          <section className="home-video-zone">
+            <div className="section-heading">
+              <div>
+                <span className="tag">02 · VIDEO</span>
+                <h2>Video thể thao chọn lọc</h2>
+              </div>
+              <Link href="/video">Xem thư viện video →</Link>
+            </div>
+            <div className="video-desk">
+              <VideoFeature item={generalVideos[0]} />
+              <div className="video-desk-list">
+                {generalVideos.slice(1, 5).map((item) => (
+                  <VideoRow item={item} key={item.id} />
+                ))}
+              </div>
+            </div>
+            {fitnessVideos.length ? (
+              <div className="fitness-video-block">
+                <div className="video-subheading">
+                  <div>
+                    <span>THỂ HÌNH & TẬP LUYỆN</span>
+                    <h3>Kỹ thuật, dinh dưỡng và phát triển cơ bắp</h3>
+                  </div>
+                  <Link href="/video">Xem thêm →</Link>
+                </div>
+                <div className="fitness-video-grid">
+                  {fitnessVideos.slice(0, 4).map((item) => (
+                    <VideoCard item={item} key={item.id} />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
         {scored.length ? (
           <section className="sports-results">
             <div className="section-heading">
               <div>
-                <span className="tag">02 · KẾT QUẢ</span>
+                <span className="tag">03 · KẾT QUẢ</span>
                 <h2>Tỷ số đáng chú ý</h2>
               </div>
             </div>
@@ -155,7 +214,7 @@ export default async function Home() {
         <section className="sports-section">
           <div className="section-heading">
             <div>
-              <span className="tag">03 · TOÀN CẢNH</span>
+              <span className="tag">04 · TOÀN CẢNH</span>
               <h2>Nhiều góc nhìn thể thao</h2>
             </div>
             <Link href="/danh-muc">Khám phá chuyên mục →</Link>
@@ -169,7 +228,7 @@ export default async function Home() {
         <section className="sports-section">
           <div className="section-heading">
             <div>
-              <span className="tag">04 · THEO DÕI</span>
+              <span className="tag">05 · THEO DÕI</span>
               <h2>Các mảng thể thao</h2>
             </div>
           </div>
@@ -185,6 +244,81 @@ export default async function Home() {
       </main>
       <Footer />
     </>
+  );
+}
+
+function uniqueItems(items: Item[]) {
+  return Array.from(new Map(items.map((item) => [item.id, item])).values());
+}
+
+function diversifyVideos(items: Item[], limit: number, maxPerSource = 2) {
+  const selected: Item[] = [];
+  const sourceCounts = new Map<string, number>();
+
+  for (const item of items) {
+    const source = item.source_name || "Nguồn chưa xác định";
+    const count = sourceCounts.get(source) || 0;
+    if (count >= maxPerSource) continue;
+    selected.push(item);
+    sourceCounts.set(source, count + 1);
+    if (selected.length === limit) return selected;
+  }
+
+  for (const item of items) {
+    if (selected.some((candidate) => candidate.id === item.id)) continue;
+    selected.push(item);
+    if (selected.length === limit) break;
+  }
+
+  return selected;
+}
+
+function VideoFeature({ item }: { item: Item }) {
+  return (
+    <Link className="video-feature" href={`/noi-dung/${item.id}`}>
+      <div className="video-feature-media">
+        {item.image_url ? (
+          <img src={item.image_url} alt="" />
+        ) : (
+          <div className="video-placeholder">▶</div>
+        )}
+        <span className="video-play">▶</span>
+      </div>
+      <div className="video-feature-copy">
+        <span>{item.source_name || "Kênh thể thao"}</span>
+        <h3>{item.title}</h3>
+        <p>{item.summary || item.excerpt || "Xem video từ kênh chính thức."}</p>
+        <b>Xem video →</b>
+      </div>
+    </Link>
+  );
+}
+
+function VideoRow({ item }: { item: Item }) {
+  return (
+    <Link className="video-desk-row" href={`/noi-dung/${item.id}`}>
+      <div>
+        {item.image_url ? <img src={item.image_url} alt="" /> : <span>▶</span>}
+        <i>▶</i>
+      </div>
+      <section>
+        <small>{item.source_name || "YouTube"}</small>
+        <strong>{item.title}</strong>
+      </section>
+    </Link>
+  );
+}
+
+function VideoCard({ item }: { item: Item }) {
+  return (
+    <Link className="fitness-video-card" href={`/noi-dung/${item.id}`}>
+      <div>
+        {item.image_url ? <img src={item.image_url} alt="" /> : <span>▶</span>}
+        <i>▶</i>
+      </div>
+      <small>{item.source_name || "Kênh thể hình"}</small>
+      <strong>{item.title}</strong>
+    </Link>
   );
 }
 
