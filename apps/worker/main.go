@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"repwire/internal/briefmedia"
 	"repwire/internal/config"
 	"repwire/internal/ingest"
 	"repwire/internal/jobs"
@@ -38,6 +39,13 @@ func main() {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	enqueue := jobs.NewEnqueuer(db.Job)
 	tgClient := telegram.NewClient(cfg.TelegramBotToken)
+	tgHandler := telegram.NewHandler(db, tgClient, enqueue)
+	if cfg.TelegramPolling && tgClient.Enabled() {
+		go tgClient.Poll(ctx, tgHandler, func(err error) {
+			log.Error("telegram polling failed", "err", err)
+		})
+		log.Info("telegram polling started")
+	}
 
 	handlers := &jobs.Handlers{
 		DB:             db,
@@ -50,6 +58,10 @@ func main() {
 		Summarizer:     process.NewSummarizer(cfg.LLMAPIKey, cfg.LLMBaseURL, cfg.LLMModel, cfg.LLMDailyBudgetUSD, cfg.LLMMaxCallsPerHour, db.LLM()),
 		Telegram:       tgClient,
 		Digest:         telegram.NewDigest(db, cfg.PublicBaseURL),
+		TTS:            briefmedia.NewTTS(cfg.TTSAPIKey, cfg.TTSModel, cfg.TTSVoice),
+		VideoRenderer:  briefmedia.NewVideoRenderer(cfg.FFmpegPath, cfg.VideoFontFile),
+		MediaDir:       cfg.MediaStorageDir,
+		PublicBaseURL:  cfg.MediaPublicBaseURL,
 		ScoreThreshold: cfg.LLMScoreThreshold,
 	}
 

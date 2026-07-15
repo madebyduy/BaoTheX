@@ -10,6 +10,7 @@ apps/worker/worker
 
 # Env
 .env
+var/
 .env.local
 *.local
 

@@ -78,6 +78,22 @@ func (e *Enqueuer) EnqueueSendWeekly(ctx context.Context, userID int64) error {
 	})
 }
 
+func (e *Enqueuer) EnqueueGenerateAudio(ctx context.Context, day time.Time) error {
+	date := day.Format("2006-01-02")
+	return e.repo.Enqueue(ctx, domain.JobGenerateAudio, domain.BriefPayload{Date: date}, postgres.EnqueueOpts{
+		DedupKey: "audio-brief:" + date,
+		Priority: 2,
+	})
+}
+
+func (e *Enqueuer) EnqueueGenerateVideo(ctx context.Context, day time.Time) error {
+	date := day.Format("2006-01-02")
+	return e.repo.Enqueue(ctx, domain.JobGenerateVideo, domain.BriefPayload{Date: date}, postgres.EnqueueOpts{
+		DedupKey: "video-brief:" + date,
+		Priority: 2,
+	})
+}
+
 // backoff returns an exponential backoff duration with jitter, capped at 2h.
 func backoff(attempt int) time.Duration {
 	d := time.Duration(math.Pow(2, float64(attempt))) * time.Minute // 2,4,8,16,32...

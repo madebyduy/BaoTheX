@@ -140,3 +140,102 @@ export function NotificationSettings() {
     </div>
   );
 }
+
+type TelegramStatus = {
+  configured: boolean;
+  linked: boolean;
+  bot_username?: string;
+  username?: string;
+  linked_at?: string;
+};
+
+export function TelegramSettings() {
+  const [status, setStatus] = useState<TelegramStatus | null>(null);
+  const [message, setMessage] = useState("Đang kiểm tra Telegram…");
+
+  async function refresh() {
+    const response = await fetch(`${API}/api/v1/telegram/status`, { credentials: "include" });
+    if (!response.ok) {
+      setStatus(null);
+      setMessage(
+        response.status === 401 ? "Đăng nhập để kết nối Telegram." : "Chưa thể kiểm tra Telegram.",
+      );
+      return;
+    }
+    const json = await response.json();
+    setStatus(json.data ?? json);
+    setMessage("");
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function connect() {
+    setMessage("Đang tạo liên kết bảo mật…");
+    const response = await fetch(`${API}/api/v1/telegram/link`, { credentials: "include" });
+    if (!response.ok) {
+      setMessage(
+        response.status === 401 ? "Bạn cần đăng nhập trước." : "Bot Telegram chưa sẵn sàng.",
+      );
+      return;
+    }
+    const json = await response.json();
+    const link = (json.data ?? json).deep_link as string;
+    window.open(link, "_blank", "noopener,noreferrer");
+    setMessage("Trong Telegram, bấm Start rồi quay lại đây kiểm tra kết nối.");
+  }
+
+  async function unlink() {
+    const response = await fetch(`${API}/api/v1/telegram`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (response.ok) await refresh();
+  }
+
+  async function test() {
+    setMessage("Đang xếp hàng gửi bản tin thử…");
+    const response = await fetch(`${API}/api/v1/notifications/test`, {
+      method: "POST",
+      credentials: "include",
+    });
+    setMessage(response.ok ? "Đã xếp hàng. Kiểm tra Telegram trong ít phút." : "Chưa thể gửi thử.");
+  }
+
+  return (
+    <section className="settings-card telegram-settings">
+      <div className="settings-card-head">
+        <div>
+          <span className="tag">BẢN TIN CÁ NHÂN</span>
+          <h2>Nhận báo qua Telegram</h2>
+          <p>Bản tin sáng, tin đã xác nhận và cập nhật từ đội bạn theo dõi.</p>
+        </div>
+        <span className={`connection-dot ${status?.linked ? "online" : ""}`}>
+          {status?.linked ? "Đã kết nối" : "Chưa kết nối"}
+        </span>
+      </div>
+      {status?.linked ? (
+        <div className="telegram-actions">
+          <strong>@{status.username || status.bot_username || "telegram"}</strong>
+          <button className="btn ember" type="button" onClick={test}>
+            Gửi bản tin thử
+          </button>
+          <button className="btn light" type="button" onClick={unlink}>
+            Ngắt kết nối
+          </button>
+        </div>
+      ) : (
+        <div className="telegram-actions">
+          <button className="btn ember" type="button" onClick={connect}>
+            Mở @{status?.bot_username || "baothexbot"}
+          </button>
+          <button className="btn light" type="button" onClick={refresh}>
+            Tôi đã bấm Start
+          </button>
+        </div>
+      )}
+      {message ? <p className="settings-message">{message}</p> : null}
+    </section>
+  );
+}

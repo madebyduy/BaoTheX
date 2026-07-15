@@ -31,6 +31,9 @@ export function SiteHeader() {
           <span>⌕</span>
           <input name="q" placeholder="Tìm kiếm nội dung…" />
         </form>
+        <Link className="premium-link" href="/premium">
+          Premium
+        </Link>
         <Link className="btn ember" href="/dang-nhap">
           Đăng nhập
         </Link>

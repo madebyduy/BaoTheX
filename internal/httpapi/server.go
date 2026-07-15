@@ -9,19 +9,21 @@ import (
 	"repwire/internal/feed"
 	"repwire/internal/jobs"
 	"repwire/internal/postgres"
+	"repwire/internal/push"
 	"repwire/internal/telegram"
 )
 
 // Server holds the API dependencies and builds the HTTP handler.
 type Server struct {
-	db       *postgres.DB
-	cfg      *config.Config
-	log      *slog.Logger
-	homepage *feed.Builder
-	ranker   *feed.Ranker
-	enqueue  *jobs.Enqueuer
-	tgClient *telegram.Client
-	tgHook   *telegram.Handler
+	db         *postgres.DB
+	cfg        *config.Config
+	log        *slog.Logger
+	homepage   *feed.Builder
+	ranker     *feed.Ranker
+	enqueue    *jobs.Enqueuer
+	tgClient   *telegram.Client
+	tgHook     *telegram.Handler
+	pushClient *push.Client
 
 	loginLimiter *rateLimiter
 }
@@ -37,6 +39,7 @@ func NewServer(db *postgres.DB, cfg *config.Config, log *slog.Logger, enqueue *j
 		enqueue:      enqueue,
 		tgClient:     tgClient,
 		tgHook:       tgHook,
+		pushClient:   push.NewClient(cfg.WebPushPublicKey, cfg.WebPushPrivateKey, cfg.WebPushSubject),
 		loginLimiter: newRateLimiter(5, 15*time.Minute),
 	}
 }
@@ -56,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) routes(mux *http.ServeMux) {
+	mux.Handle("GET /media/", http.StripPrefix("/media/", http.FileServer(http.Dir(s.cfg.MediaStorageDir))))
 	// Health
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -84,6 +88,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+v1+"/search", s.handleSearch)
 	mux.HandleFunc("GET "+v1+"/search/suggest", s.handleSuggest)
 	mux.HandleFunc("GET "+v1+"/home", s.handleHome)
+	mux.HandleFunc("GET "+v1+"/capabilities", s.handlePublicCapabilities)
+	mux.HandleFunc("GET "+v1+"/audio-briefs/latest", s.handleLatestAudioBrief)
+	mux.HandleFunc("GET "+v1+"/video-briefs/latest", s.handleLatestVideoBrief)
+	mux.HandleFunc("POST "+v1+"/payments/sepay/ipn", s.handleSePayIPN)
 
 	// ---- Auth ----
 	mux.HandleFunc("POST "+v1+"/auth/register", s.handleRegister)
@@ -95,6 +103,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	// ---- Feed ----
 	mux.HandleFunc("GET "+v1+"/feed", requireAuth(s.handleFeed))
+	mux.HandleFunc("GET "+v1+"/premium/status", requireAuth(s.handlePremiumStatus))
+	mux.HandleFunc("POST "+v1+"/premium/checkout", requireAuth(s.handlePremiumCheckout))
+	mux.HandleFunc("POST "+v1+"/push/subscribe", requireAuth(s.handlePushSubscribe))
+	mux.HandleFunc("DELETE "+v1+"/push/subscribe", requireAuth(s.handlePushUnsubscribe))
+	mux.HandleFunc("POST "+v1+"/push/test", requireAuth(s.handlePushTest))
 
 	// ---- Follows ----
 	mux.HandleFunc("GET "+v1+"/follows", requireAuth(s.handleListFollows))
@@ -122,6 +135,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+v1+"/history/{id}", requireAuth(s.handleMarkRead))
 
 	// ---- Telegram / notifications ----
+	mux.HandleFunc("GET "+v1+"/telegram/status", requireAuth(s.handleTelegramStatus))
 	mux.HandleFunc("GET "+v1+"/telegram/link", requireAuth(s.handleTelegramLink))
 	mux.HandleFunc("DELETE "+v1+"/telegram", requireAuth(s.handleTelegramUnlink))
 	mux.HandleFunc("GET "+v1+"/notifications/prefs", requireAuth(s.handleGetPrefs))

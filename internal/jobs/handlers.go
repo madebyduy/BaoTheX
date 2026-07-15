@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"repwire/internal/briefmedia"
 	"repwire/internal/domain"
 	"repwire/internal/ingest"
 	"repwire/internal/postgres"
@@ -27,9 +29,13 @@ type Handlers struct {
 	PMC     *ingest.EuropePMCFetcher
 	Podcast *ingest.PodcastFetcher
 
-	Summarizer *process.Summarizer
-	Telegram   *telegram.Client
-	Digest     *telegram.Digest
+	Summarizer    *process.Summarizer
+	Telegram      *telegram.Client
+	Digest        *telegram.Digest
+	TTS           *briefmedia.TTS
+	VideoRenderer *briefmedia.VideoRenderer
+	MediaDir      string
+	PublicBaseURL string
 
 	// ScoreThreshold: only items with base_score >= this get summarized.
 	ScoreThreshold float64
@@ -48,6 +54,8 @@ func (h *Handlers) Register() map[string]HandlerFunc {
 		domain.JobScore:          h.handleScore,
 		domain.JobSendDaily:      h.handleSendDaily,
 		domain.JobSendWeekly:     h.handleSendWeekly,
+		domain.JobGenerateAudio:  h.handleGenerateAudio,
+		domain.JobGenerateVideo:  h.handleGenerateVideo,
 	}
 }
 
@@ -382,7 +390,17 @@ func (h *Handlers) handleSendDaily(ctx context.Context, j *domain.Job) error {
 		h.Log.Info("daily skipped: too few items", "user", p.UserID)
 		return nil
 	}
-	return h.deliver(ctx, p.UserID, conn.ChatID, domain.DigestDaily, msg, ids)
+	if err := h.deliver(ctx, p.UserID, conn.ChatID, domain.DigestDaily, msg, ids); err != nil {
+		return err
+	}
+	// Premium members receive the five-minute audio edition in the same chat.
+	if sub, err := h.DB.Engagement.Subscription(ctx, p.UserID); err == nil && sub.Active(time.Now()) {
+		if brief, err := h.DB.Engagement.LatestAudioBrief(ctx); err == nil && brief.AudioURL != nil {
+			_, err = h.Telegram.SendAudio(ctx, conn.ChatID, *brief.AudioURL, brief.Title+" · BaoTheX Premium")
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *Handlers) handleSendWeekly(ctx context.Context, j *domain.Job) error {

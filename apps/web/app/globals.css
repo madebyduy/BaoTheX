@@ -13,6 +13,73 @@
   --blue: #69a7ff;
 }
 
+.settings-card {
+  max-width: 860px;
+  margin: 22px 0;
+  padding: 26px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(145deg, #151b24, #0f131a);
+}
+.settings-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+.settings-card h2 { margin: 8px 0; font-size: 26px; }
+.settings-card p { color: var(--muted); line-height: 1.6; }
+.connection-dot {
+  white-space: nowrap;
+  padding: 7px 10px;
+  color: #c6ccd6;
+  border: 1px solid #3a4350;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.connection-dot.online { color: #8af0b1; border-color: #286e45; background: #10291c; }
+.telegram-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.telegram-actions strong { margin-right: auto; }
+.settings-message { margin: 16px 0 0; font-size: 13px; }
+.premium-link { color: #ffd8ce; font-size: 12px; font-weight: 800; text-decoration: none; }
+.morning-player {
+  padding: 20px;
+  border: 1px solid #3d4b60;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #172235, #10151d 68%);
+}
+.morning-player-head { display: flex; align-items: center; gap: 13px; }
+.audio-orb { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; color: #0b0d11; border-radius: 50%; background: var(--accent); font-size: 13px; }
+.morning-player small { color: #ff947c; font-size: 9px; font-weight: 800; letter-spacing: .08em; }
+.morning-player h3 { margin: 4px 0 0; font-size: 17px; }
+.morning-player p { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.morning-player audio { width: 100%; height: 36px; margin-top: 16px; }
+.morning-player-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 13px; font-size: 10px; }
+.morning-player-foot span { color: var(--muted); }
+.morning-player-foot a { color: #fff; text-decoration: none; font-weight: 750; }
+.video-brief-feature { display: grid; grid-template-columns: .75fr 1.25fr; gap: 28px; align-items: center; margin: 0 0 40px; padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: linear-gradient(135deg,#121824,#0c0f15); }
+.video-brief-feature h2 { margin: 12px 0; font-size: clamp(26px,3vw,44px); line-height: 1.04; }
+.video-brief-feature p { color: var(--muted); line-height: 1.6; }
+.video-brief-feature small { color: var(--accent); font-weight: 800; }
+.video-brief-feature video { width: 100%; border-radius: 14px; background: #07090d; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+.premium-page { padding-bottom: 80px; }
+.premium-hero { max-width: 940px; padding: 90px 0 64px; }
+.premium-hero h1 { margin: 16px 0 20px; font-size: clamp(54px, 8vw, 104px); line-height: .93; letter-spacing: -.07em; }
+.premium-hero p { max-width: 690px; color: #bac6d9; font-size: 19px; line-height: 1.6; }
+.premium-cta { margin-top: 20px; padding: 14px 18px; }
+.premium-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.premium-grid article { min-height: 220px; padding: 30px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #10141b; }
+.premium-grid article b { color: var(--accent); font-family: var(--font-mono, monospace); }
+.premium-grid article h2 { margin: 28px 0 10px; font-size: 25px; }
+.premium-grid article p { max-width: 420px; color: var(--muted); line-height: 1.6; }
+@media (max-width: 640px) {
+  .settings-card-head { flex-direction: column; }
+  .premium-grid { grid-template-columns: 1fr; }
+  .video-brief-feature { grid-template-columns: 1fr; padding: 18px; }
+}
+
 /* Reader-first article presentation */
 .article-page {
   padding-top: 42px;
@@ -344,7 +411,7 @@
 .section-heading {
   display: flex;
   justify-content: space-between;
-  align-items: end;
+  align-items: flex-end;
   gap: 20px;
   margin-bottom: 18px;
 }
@@ -1073,7 +1140,7 @@ p {
 .section-head {
   display: flex;
   justify-content: space-between;
-  align-items: end;
+  align-items: flex-end;
   margin-bottom: 15px;
 }
 .section-head h2 {
@@ -1760,7 +1827,7 @@ p {
 .masthead-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  align-items: end;
+  align-items: flex-end;
   gap: 48px;
   padding: 30px 0 26px;
 }
@@ -1975,7 +2042,7 @@ p {
 .cluster-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 220px;
-  align-items: end;
+  align-items: flex-end;
   gap: 64px;
   padding: 42px 0;
   border-top: 1px solid var(--line);

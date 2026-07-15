@@ -97,6 +97,13 @@ make run-api           # terminal 1
 make run-worker        # terminal 2
 ```
 
+To apply one migration directly to Supabase/PostgreSQL without Docker, load
+`.env` into the process and run:
+
+```bash
+go run ./tools/apply-migration migrations/0009_engagement_suite.up.sql
+```
+
 ---
 
 ## How it works
@@ -114,6 +121,8 @@ make run-worker        # terminal 2
 5. **Feed / homepage** blends 50% general + 30% personal + 20% discovery.
 6. **Telegram** sends a personalised Daily Brief and Weekly Research digest via
    timezone-aware scheduling, with strict anti-spam thresholds.
+7. **Morning media** renders a narrated audio brief and a short MP4 recap from
+   the highest-ranked Vietnamese stories; both are cached and reused.
 
 The job queue is pure PostgreSQL (`FOR UPDATE SKIP LOCKED`), with exponential
 backoff, a dead-letter state, and a reaper for crashed workers. No Redis/RabbitMQ.
@@ -132,6 +141,11 @@ To enable each capability, set:
 | YouTube ingestion   | `YOUTUBE_API_KEY` |
 | LLM summaries       | `LLM_API_KEY` (+ optional `LLM_MODEL`, `LLM_BASE_URL`, `LLM_DAILY_BUDGET_USD`) |
 | Telegram digests    | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` |
+| Local Telegram dev  | `TELEGRAM_POLLING=true` |
+| Morning audio       | `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE` |
+| Automatic video    | `FFMPEG_PATH`, `VIDEO_FONT_FILE`, `MEDIA_STORAGE_DIR` |
+| Web Push / PWA      | `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY`, `WEB_PUSH_SUBJECT` |
+| Premium / SePay     | `SEPAY_MERCHANT`, `SEPAY_SECRET_KEY`, `SEPAY_IPN_SECRET_KEY` |
 
 Everything runs without these — those pipelines simply stay idle until configured.
 
@@ -140,6 +154,10 @@ Everything runs without these — those pipelines simply stay idle until configu
 Point the bot at your public URL once deployed:
 
 ```
+
+For localhost, set `TELEGRAM_POLLING=true`; the worker then uses `getUpdates`
+and no public tunnel is required. Disable polling when the production webhook
+is active.
 https://api.telegram.org/bot<TOKEN>/setWebhook?url=<PUBLIC_BASE_URL>/api/v1/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>
 ```
 
@@ -157,7 +175,18 @@ telegram, and admin endpoints).
 
 ## Frontend
 
-The Next.js app lives at `apps/web` and is **built later**. When it exists:
+The Next.js app lives at `apps/web`. Run it locally with:
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+It includes an installable PWA, Web Push controls, Telegram settings, morning
+audio, automatic video recaps and Premium checkout.
+
+For deployment:
 
 1. Add a `web` service to `deploy/docker-compose.yml` (build `apps/web/Dockerfile`,
    env `API_URL=http://api:8080`, port `3000`).

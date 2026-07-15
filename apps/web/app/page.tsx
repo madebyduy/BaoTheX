@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { api, demoItems, demoTopics, type Item, type Topic } from "./lib";
 import { Footer } from "./ui";
+import { DailyBriefPlayer } from "./daily-brief-player";
 
 type HomeData = { today?: Item[]; sports?: Item[]; videos?: Item[] };
 
@@ -104,6 +105,7 @@ export default async function Home() {
             </div>
           </section>
           <aside className="sports-rail">
+            <DailyBriefPlayer />
             <div className="rail-card">
               <h3>Chủ đề thể thao</h3>
               {sportsTopics.slice(0, 10).map((topic) => (
@@ -297,7 +299,12 @@ const teams: Team[] = [
   { name: "Real Madrid", aliases: ["real madrid"], mark: "RM", kind: "club" },
   { name: "Barcelona", aliases: ["barcelona", "barca"], mark: "FCB", kind: "club" },
   { name: "Man City", aliases: ["man city", "manchester city"], mark: "MCI", kind: "club" },
-  { name: "Man Utd", aliases: ["man utd", "man united", "manchester united"], mark: "MUN", kind: "club" },
+  {
+    name: "Man Utd",
+    aliases: ["man utd", "man united", "manchester united"],
+    mark: "MUN",
+    kind: "club",
+  },
   { name: "Liverpool", aliases: ["liverpool"], mark: "LIV", kind: "club" },
   { name: "Arsenal", aliases: ["arsenal"], mark: "ARS", kind: "club" },
   { name: "Chelsea", aliases: ["chelsea"], mark: "CHE", kind: "club" },
@@ -311,13 +318,18 @@ const teams: Team[] = [
 ];
 
 function fixtureFrom(item: Item): Fixture | null {
-  const text = [item.title, item.summary, item.excerpt].filter(Boolean).join(" ").toLocaleLowerCase("vi");
+  const text = [item.title, item.summary, item.excerpt]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("vi");
   const score = /\b(\d{1,2})\s*[-–:]\s*(\d{1,2})\b/.exec(text);
   if (!score || score.index < 0) return null;
 
   const found = teams
     .map((team) => {
-      const positions = team.aliases.map((alias) => text.indexOf(alias)).filter((index) => index >= 0);
+      const positions = team.aliases
+        .map((alias) => text.indexOf(alias))
+        .filter((index) => index >= 0);
       return positions.length ? { team, index: Math.min(...positions) } : null;
     })
     .filter((entry): entry is { team: Team; index: number } => Boolean(entry))

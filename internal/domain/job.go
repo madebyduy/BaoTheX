@@ -30,6 +30,8 @@ const (
 	JobSendDaily      = "send_daily"
 	JobSendWeekly     = "send_weekly"
 	JobFollowAlert    = "follow_alert"
+	JobGenerateAudio  = "generate_audio_brief"
+	JobGenerateVideo  = "generate_video_brief"
 )
 
 // Job is one unit of background work stored in the jobs table.
@@ -74,4 +76,8 @@ type ContentPayload struct {
 type DigestPayload struct {
 	UserID int64  `json:"user_id"`
 	Date   string `json:"date,omitempty"` // YYYY-MM-DD, for dedup
+}
+
+type BriefPayload struct {
+	Date string `json:"date"`
 }

@@ -2,15 +2,41 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"repwire/internal/auth"
+	"repwire/internal/domain"
 	"repwire/internal/telegram"
 )
 
+func (s *Server) handleTelegramStatus(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	configured := s.tgClient != nil && s.tgClient.Enabled() && s.cfg.TelegramBotUsername != ""
+	conn, err := s.db.Telegram.ConnectionByUser(r.Context(), u.ID)
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	data := map[string]any{
+		"configured":   configured,
+		"linked":       conn != nil,
+		"bot_username": s.cfg.TelegramBotUsername,
+	}
+	if conn != nil {
+		data["username"] = conn.Username
+		data["linked_at"] = conn.LinkedAt
+	}
+	writeJSON(w, http.StatusOK, data, nil)
+}
+
 func (s *Server) handleTelegramLink(w http.ResponseWriter, r *http.Request) {
+	if s.tgClient == nil || !s.tgClient.Enabled() || s.cfg.TelegramBotUsername == "" {
+		writeError(w, http.StatusServiceUnavailable, "telegram_not_configured", "Telegram bot is not configured")
+		return
+	}
 	u := userFrom(r.Context())
 	code, err := auth.NewLinkCode()
 	if err != nil {

@@ -11,7 +11,8 @@ import (
 
 // Update is the subset of a Telegram update we handle.
 type Update struct {
-	Message *struct {
+	UpdateID int64 `json:"update_id"`
+	Message  *struct {
 		MessageID int64 `json:"message_id"`
 		From      struct {
 			ID       int64  `json:"id"`
@@ -67,7 +68,7 @@ func (h *Handler) Handle(ctx context.Context, u *Update) error {
 	case text == "/today":
 		return h.handleToday(ctx, chatID)
 	case text == "/settings":
-		return h.reply(ctx, chatID, "⚙️ Mở cài đặt tại RepWire → Settings → Telegram để chỉnh giờ gửi, số lượng và loại nội dung.")
+		return h.reply(ctx, chatID, "⚙️ Mở BaoTheX → Cài đặt → Telegram để chỉnh giờ gửi, số lượng và loại nội dung.")
 	default:
 		return h.reply(ctx, chatID, "Lệnh không nhận diện được. Dùng /today, /pause, /resume, /settings.")
 	}
@@ -77,7 +78,7 @@ func (h *Handler) handleStart(ctx context.Context, u *Update, text string) error
 	chatID := u.Message.Chat.ID
 	parts := strings.Fields(text)
 	if len(parts) < 2 {
-		return h.reply(ctx, chatID, "Chào bạn! Mở RepWire → Settings → Telegram và bấm \"Kết nối Telegram\" để nhận mã liên kết.")
+		return h.reply(ctx, chatID, "Chào bạn! Mở BaoTheX → Cài đặt → Telegram và bấm \"Kết nối Telegram\" để nhận mã liên kết.")
 	}
 	code := parts[1]
 	var username *string

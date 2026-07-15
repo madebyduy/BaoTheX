@@ -217,7 +217,9 @@ function ReadableText({ text }: { text: string }) {
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter(Boolean)
-    .filter((p) => !/^(?:continue reading|read more|tiếp tục đọc|đọc tiếp)\s*(?:\.{3}|…)?$/i.test(p));
+    .filter(
+      (p) => !/^(?:continue reading|read more|tiếp tục đọc|đọc tiếp)\s*(?:\.{3}|…)?$/i.test(p),
+    );
   return (
     <div className="article-prose">
       {paragraphs.map((p, i) => (

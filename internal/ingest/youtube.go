@@ -3,9 +3,12 @@ package ingest
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +37,7 @@ func NewYouTubeFetcher(client *http.Client, apiKey string, db *postgres.DB) *You
 // Fetch returns the latest uploads for a channel source as RawItems.
 func (f *YouTubeFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchResult, error) {
 	if f.apiKey == "" {
-		return nil, fmt.Errorf("youtube: YOUTUBE_API_KEY not configured")
+		return f.fetchPublicFeed(ctx, src)
 	}
 
 	playlistID, err := f.resolveUploadsPlaylist(ctx, src)
@@ -93,6 +96,119 @@ func (f *YouTubeFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchR
 		res.Items = append(res.Items, raw)
 	}
 	return res, nil
+}
+
+var youtubeChannelIDRE = regexp.MustCompile(`(?:"channelId"|"externalId")\s*:\s*"(UC[A-Za-z0-9_-]{20,})"`)
+
+// fetchPublicFeed keeps approved YouTube channels working without consuming
+// Data API quota. It resolves the channel id from the public channel page and
+// then reads YouTube's Atom feed. Statistics and duration are hydrated only
+// when an API key is configured, but the playable video and thumbnail remain.
+func (f *YouTubeFetcher) fetchPublicFeed(ctx context.Context, src *domain.Source) (*FetchResult, error) {
+	channelID, err := f.resolvePublicChannelID(ctx, src)
+	if err != nil {
+		return nil, err
+	}
+	feedURL := "https://www.youtube.com/feeds/videos.xml?channel_id=" + url.QueryEscape(channelID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, &httpError{status: resp.StatusCode, url: "youtube/feed"}
+	}
+	var feed struct {
+		Entries []struct {
+			VideoID   string `xml:"videoId"`
+			ChannelID string `xml:"channelId"`
+			Title     string `xml:"title"`
+			Published string `xml:"published"`
+			Link      struct {
+				Href string `xml:"href,attr"`
+			} `xml:"link"`
+			Media struct {
+				Description string `xml:"description"`
+				Thumbnail   struct {
+					URL string `xml:"url,attr"`
+				} `xml:"thumbnail"`
+			} `xml:"group"`
+		} `xml:"entry"`
+	}
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&feed); err != nil {
+		return nil, fmt.Errorf("youtube: decode public feed: %w", err)
+	}
+	result := &FetchResult{}
+	for _, entry := range feed.Entries {
+		if entry.VideoID == "" || entry.Title == "" {
+			continue
+		}
+		published, _ := time.Parse(time.RFC3339, entry.Published)
+		videoURL := entry.Link.Href
+		if videoURL == "" {
+			videoURL = "https://www.youtube.com/watch?v=" + entry.VideoID
+		}
+		raw := RawItem{
+			Type: domain.ContentVideo, Title: entry.Title, URL: videoURL,
+			Language: src.DefaultLang,
+		}
+		if !published.IsZero() {
+			raw.Published = &published
+		}
+		if entry.Media.Description != "" {
+			raw.Excerpt = ptr(truncate(entry.Media.Description, 200))
+		}
+		if entry.Media.Thumbnail.URL != "" {
+			raw.ImageURL = ptr(entry.Media.Thumbnail.URL)
+		}
+		raw.Video = &domain.Video{
+			YouTubeID: entry.VideoID, ChannelID: channelID, ChannelTitle: src.Name,
+			ThumbnailURL: ptr(entry.Media.Thumbnail.URL), Description: ptr(entry.Media.Description),
+		}
+		result.Items = append(result.Items, raw)
+	}
+	return result, nil
+}
+
+func (f *YouTubeFetcher) resolvePublicChannelID(ctx context.Context, src *domain.Source) (string, error) {
+	if src.UploadsPlaylistID != nil && strings.HasPrefix(*src.UploadsPlaylistID, "UU") {
+		return "UC" + strings.TrimPrefix(*src.UploadsPlaylistID, "UU"), nil
+	}
+	pageURL := src.HomepageURLOrEmpty()
+	if pageURL == "" {
+		ref := src.FeedURLOrEmpty()
+		if strings.HasPrefix(ref, "UC") {
+			return ref, nil
+		}
+		pageURL = "https://www.youtube.com/" + strings.TrimPrefix(ref, "/")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", &httpError{status: resp.StatusCode, url: "youtube/channel"}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 3<<20))
+	if err != nil {
+		return "", err
+	}
+	match := youtubeChannelIDRE.FindSubmatch(body)
+	if len(match) < 2 {
+		return "", fmt.Errorf("youtube: cannot resolve public channel id for %q", pageURL)
+	}
+	return string(match[1]), nil
 }
 
 // resolveUploadsPlaylist returns the channel's uploads playlist id, resolving

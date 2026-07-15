@@ -12,7 +12,12 @@ export function BackButton() {
     else router.push("/");
   }
   return (
-    <button className="article-back" type="button" onClick={goBack} aria-label="Quay lại trang trước">
+    <button
+      className="article-back"
+      type="button"
+      onClick={goBack}
+      aria-label="Quay lại trang trước"
+    >
       <span>←</span> Quay lại
     </button>
   );

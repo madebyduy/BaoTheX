@@ -41,3 +41,11 @@ func (s *Source) FeedURLOrEmpty() string {
 	}
 	return *s.FeedURL
 }
+
+// HomepageURLOrEmpty returns the configured public source page when present.
+func (s *Source) HomepageURLOrEmpty() string {
+	if s.HomepageURL == nil {
+		return ""
+	}
+	return *s.HomepageURL
+}

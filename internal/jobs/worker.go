@@ -9,6 +9,7 @@ import (
 
 	"repwire/internal/domain"
 	"repwire/internal/postgres"
+	"repwire/internal/process"
 )
 
 // HandlerFunc processes a single job.
@@ -110,7 +111,13 @@ func (w *Worker) run(ctx context.Context, job *domain.Job, sem chan struct{}) {
 }
 
 func (w *Worker) fail(ctx context.Context, job *domain.Job, cause error) {
-	if err := w.queue.Fail(ctx, job, cause, backoff(job.Attempts)); err != nil {
+	retryAfter := backoff(job.Attempts)
+	if errors.Is(cause, process.ErrBudgetExceeded) {
+		// The daily quota does not recover after a few minutes. A long delay
+		// prevents a depleted key from starving fetch, scoring and media jobs.
+		retryAfter = 6 * time.Hour
+	}
+	if err := w.queue.Fail(ctx, job, cause, retryAfter); err != nil {
 		w.log.Error("mark fail failed", "id", job.ID, "err", err)
 	}
 }

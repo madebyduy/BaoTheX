@@ -14,15 +14,16 @@ import (
 type DB struct {
 	Pool *pgxpool.Pool
 
-	Content  *ContentRepo
-	Source   *SourceRepo
-	User     *UserRepo
-	Follow   *FollowRepo
-	Topic    *TopicRepo
-	Entity   *EntityRepo
-	Telegram *TelegramRepo
-	Job      *JobRepo
-	Search   *SearchRepo
+	Content    *ContentRepo
+	Source     *SourceRepo
+	User       *UserRepo
+	Follow     *FollowRepo
+	Topic      *TopicRepo
+	Entity     *EntityRepo
+	Telegram   *TelegramRepo
+	Engagement *EngagementRepo
+	Job        *JobRepo
+	Search     *SearchRepo
 }
 
 // Open creates a connection pool and pings the database.
@@ -56,6 +57,7 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 	db.Topic = &TopicRepo{db: db}
 	db.Entity = &EntityRepo{db: db}
 	db.Telegram = &TelegramRepo{db: db}
+	db.Engagement = &EngagementRepo{db: db}
 	db.Job = &JobRepo{db: db}
 	db.Search = &SearchRepo{db: db}
 	return db, nil

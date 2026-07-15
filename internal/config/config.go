@@ -25,9 +25,31 @@ type Config struct {
 	YouTubeAPIKey string
 
 	// Telegram
-	TelegramBotToken       string
-	TelegramWebhookSecret  string
-	TelegramBotUsername    string
+	TelegramBotToken      string
+	TelegramWebhookSecret string
+	TelegramBotUsername   string
+	TelegramPolling       bool
+
+	// Media / TTS
+	TTSAPIKey          string
+	TTSModel           string
+	TTSVoice           string
+	MediaStorageDir    string
+	MediaPublicBaseURL string
+	FFmpegPath         string
+	VideoFontFile      string
+
+	// Web Push
+	WebPushPublicKey  string
+	WebPushPrivateKey string
+	WebPushSubject    string
+
+	// SePay / Premium
+	SePayMerchant       string
+	SePaySecretKey      string
+	SePayBaseURL        string
+	SePayIPNSecretKey   string
+	PremiumMonthlyPrice int
 
 	// LLM
 	LLMAPIKey          string
@@ -46,24 +68,40 @@ type Config struct {
 // It returns an error only for values that are required and cannot be defaulted.
 func Load() (*Config, error) {
 	c := &Config{
-		DatabaseURL:            env("DATABASE_URL", ""),
-		SessionSecret:          env("SESSION_SECRET", ""),
-		PublicBaseURL:          env("PUBLIC_BASE_URL", "http://localhost:3000"),
-		APIAddr:                env("API_ADDR", ":8080"),
-		CORSOrigins:            splitCSV(env("CORS_ORIGINS", "http://localhost:3000")),
-		WorkerConcurrency:      envInt("WORKER_CONCURRENCY", 8),
-		YouTubeAPIKey:          env("YOUTUBE_API_KEY", ""),
-		TelegramBotToken:       env("TELEGRAM_BOT_TOKEN", ""),
-		TelegramWebhookSecret:  env("TELEGRAM_WEBHOOK_SECRET", ""),
-		TelegramBotUsername:    env("TELEGRAM_BOT_USERNAME", "RepWireBot"),
-		LLMAPIKey:              env("LLM_API_KEY", ""),
-		LLMBaseURL:             env("LLM_BASE_URL", "https://api.anthropic.com/v1/messages"),
-		LLMModel:               env("LLM_MODEL", "claude-haiku-4-5-20251001"),
-		LLMDailyBudgetUSD:      envFloat("LLM_DAILY_BUDGET_USD", 5),
-		LLMScoreThreshold:      envFloat("LLM_SCORE_THRESHOLD", 25),
-		LLMMaxCallsPerHour:     envInt("LLM_MAX_CALLS_PER_HOUR", 120),
-		LogFormat:              env("LOG_FORMAT", "json"),
-		LogLevel:               env("LOG_LEVEL", "info"),
+		DatabaseURL:           env("DATABASE_URL", ""),
+		SessionSecret:         env("SESSION_SECRET", ""),
+		PublicBaseURL:         env("PUBLIC_BASE_URL", "http://localhost:3000"),
+		APIAddr:               env("API_ADDR", ":8080"),
+		CORSOrigins:           splitCSV(env("CORS_ORIGINS", "http://localhost:3000")),
+		WorkerConcurrency:     envInt("WORKER_CONCURRENCY", 8),
+		YouTubeAPIKey:         env("YOUTUBE_API_KEY", ""),
+		TelegramBotToken:      env("TELEGRAM_BOT_TOKEN", ""),
+		TelegramWebhookSecret: env("TELEGRAM_WEBHOOK_SECRET", ""),
+		TelegramBotUsername:   env("TELEGRAM_BOT_USERNAME", "RepWireBot"),
+		TelegramPolling:       envBool("TELEGRAM_POLLING", strings.Contains(env("PUBLIC_BASE_URL", ""), "localhost")),
+		TTSAPIKey:             env("TTS_API_KEY", env("LLM_API_KEY", "")),
+		TTSModel:              env("TTS_MODEL", "gemini-2.5-flash-preview-tts"),
+		TTSVoice:              env("TTS_VOICE", "Kore"),
+		MediaStorageDir:       env("MEDIA_STORAGE_DIR", "./var/media"),
+		MediaPublicBaseURL:    env("MEDIA_PUBLIC_BASE_URL", env("PUBLIC_BASE_URL", "http://localhost:3000")),
+		FFmpegPath:            env("FFMPEG_PATH", "ffmpeg"),
+		VideoFontFile:         env("VIDEO_FONT_FILE", "C:/Windows/Fonts/arialbd.ttf"),
+		WebPushPublicKey:      env("WEB_PUSH_PUBLIC_KEY", ""),
+		WebPushPrivateKey:     env("WEB_PUSH_PRIVATE_KEY", ""),
+		WebPushSubject:        env("WEB_PUSH_SUBJECT", "mailto:admin@example.com"),
+		SePayMerchant:         env("SEPAY_MERCHANT", ""),
+		SePaySecretKey:        env("SEPAY_SECRET_KEY", ""),
+		SePayBaseURL:          env("SEPAY_BASE_URL", "https://pay.sepay.vn"),
+		SePayIPNSecretKey:     env("SEPAY_IPN_SECRET_KEY", ""),
+		PremiumMonthlyPrice:   envInt("PREMIUM_MONTHLY_PRICE", 39000),
+		LLMAPIKey:             env("LLM_API_KEY", ""),
+		LLMBaseURL:            env("LLM_BASE_URL", "https://api.anthropic.com/v1/messages"),
+		LLMModel:              env("LLM_MODEL", "claude-haiku-4-5-20251001"),
+		LLMDailyBudgetUSD:     envFloat("LLM_DAILY_BUDGET_USD", 5),
+		LLMScoreThreshold:     envFloat("LLM_SCORE_THRESHOLD", 25),
+		LLMMaxCallsPerHour:    envInt("LLM_MAX_CALLS_PER_HOUR", 120),
+		LogFormat:             env("LOG_FORMAT", "json"),
+		LogLevel:              env("LOG_LEVEL", "info"),
 	}
 
 	if c.DatabaseURL == "" {
@@ -95,6 +133,15 @@ func envFloat(key string, def float64) float64 {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 			return f
+		}
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
+			return b
 		}
 	}
 	return def
