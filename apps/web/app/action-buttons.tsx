@@ -1,8 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+
+export function BackButton() {
+  const router = useRouter();
+  function goBack() {
+    if (window.history.length > 1) router.back();
+    else router.push("/");
+  }
+  return (
+    <button className="article-back" type="button" onClick={goBack} aria-label="Quay lại trang trước">
+      <span>←</span> Quay lại
+    </button>
+  );
+}
 
 export function SaveButton({ contentId }: { contentId: number }) {
   const [saved, setSaved] = useState(false);

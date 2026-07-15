@@ -17,6 +17,32 @@
 .article-page {
   padding-top: 42px;
 }
+.article-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 24px;
+  padding: 9px 13px;
+  color: #d8e1ed;
+  border: 1px solid #344154;
+  border-radius: 999px;
+  background: #10151d;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+.article-back:hover {
+  color: #fff;
+  border-color: #61748e;
+  background: #182130;
+}
+.article-back span {
+  color: var(--accent);
+  font-size: 17px;
+  line-height: 1;
+}
 .article-kicker {
   display: flex;
   align-items: center;
@@ -26,6 +52,38 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+.article-loading {
+  min-height: 100vh;
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #151b24;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.055), transparent);
+  animation: article-shimmer 1.25s infinite;
+}
+.skeleton-back { width: 92px; height: 34px; margin-bottom: 26px; border-radius: 999px; }
+.skeleton-kicker { width: 260px; height: 14px; margin-bottom: 22px; }
+.skeleton-title { width: min(920px, 90%); height: 58px; margin-bottom: 12px; }
+.skeleton-title.short { width: min(620px, 65%); }
+.skeleton-lede { width: min(760px, 80%); height: 48px; margin: 26px 0; }
+.skeleton-hero { width: min(1120px, 100%); height: 420px; }
+.loading-columns { display: grid; grid-template-columns: 220px minmax(0, 760px); gap: 38px; max-width: 1020px; margin: 30px auto; }
+.skeleton-aside { height: 240px; }
+.skeleton-copy { height: 430px; }
+@keyframes article-shimmer { to { transform: translateX(100%); } }
+@media (max-width: 760px) {
+  .loading-columns { grid-template-columns: 1fr; }
+  .skeleton-aside { height: 100px; }
+  .skeleton-hero { height: 260px; }
 }
 .article-title {
   max-width: 1060px;

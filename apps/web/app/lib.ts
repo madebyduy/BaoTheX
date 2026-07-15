@@ -62,9 +62,12 @@ export type Entity = {
   follower_count?: number;
 };
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
-export async function api<T>(path: string, fallback: T): Promise<T> {
+export async function api<T>(path: string, fallback: T, revalidate?: number): Promise<T> {
   try {
-    const r = await fetch(`${API}/api/v1${path}`, { cache: "no-store" });
+    const r = await fetch(
+      `${API}/api/v1${path}`,
+      revalidate ? { next: { revalidate } } : { cache: "no-store" },
+    );
     if (!r.ok) return fallback;
     const json = await r.json();
     return (json.data ?? json) as T;

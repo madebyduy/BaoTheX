@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { api, demoItems, type ContentBody, type Item, typeLabel } from "../../lib";
 import { Footer } from "../../ui";
-import { SaveButton, TranslateButton } from "../../action-buttons";
+import { BackButton, SaveButton, TranslateButton } from "../../action-buttons";
 
 type Detail = {
   item?: Item;
@@ -23,7 +23,11 @@ type Detail = {
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const data = await api<Detail>(`/content/${id}`, {});
+  const [data, related, newsroom] = await Promise.all([
+    api<Detail>(`/content/${id}`, {}, 30),
+    api<Item[]>(`/content/${id}/related`, [], 30),
+    api<Item[]>("/content?per_page=8&sort=top", [], 30),
+  ]);
   const item = data.item || demoItems.find((x) => x.id === Number(id)) || demoItems[0];
   const body = data.body;
   const translated = body?.vietnamese_body?.trim();
@@ -33,11 +37,10 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   // Chỉ nhận tỷ số từ tiêu đề/mô tả ngắn; toàn văn thường chứa ngày tháng,
   // sơ đồ chiến thuật hoặc thống kê dễ bị nhận nhầm là kết quả trận đấu.
   const score = scorelineFrom([item.title, item.summary, item.excerpt].join(" "));
-  const related = await api<Item[]>(`/content/${id}/related`, []);
-  const newsroom = await api<Item[]>("/content?per_page=8&sort=top", []);
   return (
     <>
       <main className="wrap article-page">
+        <BackButton />
         <div className="article-kicker">
           <span className="tag">{typeLabel(item.type)}</span>
           <span>{item.source_name || "BaoTheX"}</span>
