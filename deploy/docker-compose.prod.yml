@@ -1,0 +1,71 @@
+services:
+  migrate:
+    image: migrate/migrate:v4.17.1
+    volumes:
+      - ../migrations:/migrations:ro
+    command: ["-path=/migrations", "-database=${DATABASE_URL}", "up"]
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    env_file: ../.env
+    environment:
+      API_ADDR: :8080
+      PUBLIC_BASE_URL: https://${DOMAIN}
+      CORS_ORIGINS: https://${DOMAIN}
+      MEDIA_STORAGE_DIR: /var/lib/baothex/media
+      MEDIA_PUBLIC_BASE_URL: https://${DOMAIN}
+      TELEGRAM_POLLING: "false"
+    volumes:
+      - media:/var/lib/baothex/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: apps/worker/Dockerfile
+    env_file: ../.env
+    environment:
+      PUBLIC_BASE_URL: https://${DOMAIN}
+      MEDIA_STORAGE_DIR: /var/lib/baothex/media
+      MEDIA_PUBLIC_BASE_URL: https://${DOMAIN}
+      TELEGRAM_POLLING: "false"
+    volumes:
+      - media:/var/lib/baothex/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://${DOMAIN}
+    environment:
+      NEXT_PUBLIC_API_URL: https://${DOMAIN}
+    depends_on: [api]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on: [api, web]
+    restart: unless-stopped
+
+volumes:
+  media: {}
+  caddydata: {}
+  caddyconfig: {}

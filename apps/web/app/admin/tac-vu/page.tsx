@@ -1,15 +1,16 @@
 import { Footer, PageTitle } from "../../ui";
 import { AdminConsole } from "../admin-console";
+
 export default function Page() {
   return (
     <>
       <main className="wrap">
         <PageTitle
-          eyebrow="Quản trị nội dung"
-          title="Hàng chờ biên tập"
-          description="Danh sách nội dung để quản trị viên kiểm tra trước khi hiển thị."
+          eyebrow="Vận hành"
+          title="Tác vụ nền"
+          description="Theo dõi hàng đợi, lỗi và chạy lại tác vụ cần thiết."
         />
-        <AdminConsole initialView="content" />
+        <AdminConsole initialView="jobs" />
       </main>
       <Footer />
     </>

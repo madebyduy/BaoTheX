@@ -1,8 +1,5 @@
 # RepWire — Docker Compose for a single VPS.
 #
-# The `web` (Next.js) service is intentionally omitted: the frontend is built
-# later. Add it under this file once apps/web exists (see README).
-#
 # Usage:
 #   cp .env.example .env   # then fill in secrets
 #   docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
@@ -46,11 +43,20 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      MEDIA_STORAGE_DIR: /var/lib/baothex/media
+      MEDIA_PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-RepWireBot}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      SEPAY_MERCHANT: ${SEPAY_MERCHANT:-}
+      SEPAY_SECRET_KEY: ${SEPAY_SECRET_KEY:-}
+      SEPAY_BASE_URL: ${SEPAY_BASE_URL:-https://pay.sepay.vn}
+      SEPAY_IPN_SECRET_KEY: ${SEPAY_IPN_SECRET_KEY:-}
+      WEB_PUSH_PUBLIC_KEY: ${WEB_PUSH_PUBLIC_KEY:-}
+      WEB_PUSH_PRIVATE_KEY: ${WEB_PUSH_PRIVATE_KEY:-}
+      WEB_PUSH_SUBJECT: ${WEB_PUSH_SUBJECT:-mailto:admin@example.com}
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,6 +64,8 @@ services:
         condition: service_completed_successfully
     ports:
       - "8080:8080"
+    volumes:
+      - media:/var/lib/baothex/media
     restart: unless-stopped
 
   worker:
@@ -68,6 +76,8 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-repwire}:${DB_PASSWORD:-repwire}@postgres:5432/${POSTGRES_DB:-repwire}?sslmode=disable}
       SESSION_SECRET: ${SESSION_SECRET}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      MEDIA_STORAGE_DIR: /var/lib/baothex/media
+      MEDIA_PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-RepWireBot}
@@ -76,6 +86,11 @@ services:
       LLM_MODEL: ${LLM_MODEL:-claude-haiku-4-5-20251001}
       LLM_DAILY_BUDGET_USD: ${LLM_DAILY_BUDGET_USD:-5}
       LLM_SCORE_THRESHOLD: ${LLM_SCORE_THRESHOLD:-25}
+      LLM_MAX_CALLS_PER_HOUR: ${LLM_MAX_CALLS_PER_HOUR:-120}
+      TTS_API_KEY: ${TTS_API_KEY:-}
+      TTS_MODEL: ${TTS_MODEL:-gemini-2.5-flash-preview-tts}
+      TTS_VOICE: ${TTS_VOICE:-Erinome}
+      TELEGRAM_POLLING: "false"
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-8}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -89,17 +104,37 @@ services:
         limits:
           memory: 512M
     restart: unless-stopped
+    volumes:
+      - media:/var/lib/baothex/media
 
-  # Reverse proxy / TLS. Enable once you have a domain + the web service.
-  # caddy:
-  #   image: caddy:2-alpine
-  #   ports: ["80:80", "443:443"]
-  #   volumes:
-  #     - ./Caddyfile:/etc/caddy/Caddyfile
-  #     - caddydata:/data
-  #   depends_on: [api]
-  #   restart: unless-stopped
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+    depends_on:
+      - api
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on: [api, web]
+    restart: unless-stopped
 
 volumes:
   pgdata: {}
   caddydata: {}
+  caddyconfig: {}
+  media: {}

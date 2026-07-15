@@ -81,6 +81,19 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
 make admin EMAIL=you@example.com
 ```
 
+Without Docker, use the idempotent seed command. Keep these values only in
+`.env` or your deployment secret manager, never in Git:
+
+```bash
+export ADMIN_EMAIL='admin@baothex.vn'
+export ADMIN_PASSWORD='a-long-random-password'
+export ADMIN_NAME='Toà soạn BaoTheX'
+go run ./tools/seed-admin
+```
+
+The command creates the account when missing, promotes it to `admin`, and
+rotates its password when run again.
+
 ---
 
 ## Quick start (local, without Docker)
@@ -186,11 +199,20 @@ npm run dev
 It includes an installable PWA, Web Push controls, Telegram settings, the
 morning audio edition, curated YouTube links and Premium checkout.
 
-For deployment:
+For deployment, set `DOMAIN`, `PUBLIC_BASE_URL`, database credentials and all
+secrets in the server environment, then run:
 
-1. Add a `web` service to `deploy/docker-compose.yml` (build `apps/web/Dockerfile`,
-   env `API_URL=http://api:8080`, port `3000`).
-2. Uncomment the `caddy` service + `web` route in `deploy/Caddyfile`.
+```bash
+docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+```
+
+The production stack now includes Next.js, API, worker, migrations, shared
+audio/video storage and Caddy HTTPS. The existing Supabase database can be used
+by setting `DATABASE_URL`; PostgreSQL does not need to be exposed publicly.
+
+For the current Supabase-based production setup, follow
+[`deploy/PRODUCTION.md`](deploy/PRODUCTION.md) and use
+`deploy/docker-compose.prod.yml`.
 
 The API already emits CORS headers for `CORS_ORIGINS`, so the web app can call
 it directly during development.

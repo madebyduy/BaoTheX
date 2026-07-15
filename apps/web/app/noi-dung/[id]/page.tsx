@@ -66,13 +66,6 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
         <p className="article-lede">
           {item.summary || item.excerpt || "Bài viết đang được biên tập và tóm tắt."}
         </p>
-        {item.story_cluster_id && (item.cluster_source_count || 0) > 1 ? (
-          <Link className="cluster-callout" href={`/su-kien/${item.story_cluster_id}`}>
-            <span>MỘT SỰ KIỆN · MỌI NGUỒN</span>
-            <strong>{item.cluster_source_count} nguồn đang cùng đưa tin</strong>
-            <b>Xem bản tổng hợp trung lập →</b>
-          </Link>
-        ) : null}
         {item.image_url ? (
           <div className="article-hero">
             <img src={item.image_url} alt="" />
@@ -189,7 +182,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
                 ) : null}
               </section>
               {item.key_points?.length ? (
-                <ArticleList title="Điểm chính" items={item.key_points} />
+                <ArticleList title="Điểm chính" items={item.key_points} featured />
               ) : null}
               {data.research?.breakdown ? (
                 <>
@@ -326,13 +319,24 @@ function ArticleSection({ title, text }: { title: string; text?: string }) {
     </section>
   ) : null;
 }
-function ArticleList({ title, items }: { title: string; items?: string[] }) {
+function ArticleList({
+  title,
+  items,
+  featured = false,
+}: {
+  title: string;
+  items?: string[];
+  featured?: boolean;
+}) {
   return items?.length ? (
-    <section className="article-section">
+    <section className={`article-section ${featured ? "article-key-points" : ""}`}>
       <h2>{title}</h2>
       <ul>
-        {items.map((x) => (
-          <li key={x}>{x}</li>
+        {items.map((x, index) => (
+          <li key={x}>
+            {featured ? <span>{String(index + 1).padStart(2, "0")}</span> : null}
+            <p>{x}</p>
+          </li>
         ))}
       </ul>
     </section>

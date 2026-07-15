@@ -21,6 +21,7 @@ help:
 	@echo "  down           Stop the stack"
 	@echo "  logs           Tail api + worker logs"
 	@echo "  admin          Promote a user to admin: make admin EMAIL=you@example.com"
+	@echo "  seed-admin     Create/update admin from ADMIN_EMAIL and ADMIN_PASSWORD"
 
 # ---- Go ----
 
@@ -91,3 +92,7 @@ admin:
 	@test -n "$(EMAIL)" || (echo "usage: make admin EMAIL=you@example.com" && exit 1)
 	docker compose -f deploy/docker-compose.yml exec -T postgres \
 		psql -U repwire -d repwire -c "UPDATE users SET role='admin' WHERE email='$(EMAIL)';"
+
+.PHONY: seed-admin
+seed-admin:
+	go run ./tools/seed-admin
