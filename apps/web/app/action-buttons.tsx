@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 
@@ -20,6 +20,23 @@ export function BackButton() {
     >
       <span>←</span> Quay lại
     </button>
+  );
+}
+
+export function SiteBackButton() {
+  const pathname = usePathname();
+  const router = useRouter();
+  if (pathname === "/") return null;
+  return (
+    <div className="site-back-wrap">
+      <button
+        className="article-back site-back"
+        type="button"
+        onClick={() => (window.history.length > 1 ? router.back() : router.push("/"))}
+      >
+        <span>←</span> Quay lại
+      </button>
+    </div>
   );
 }
 

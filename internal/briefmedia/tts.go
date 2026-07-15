@@ -17,6 +17,8 @@ import (
 
 const sampleRate = 24000
 
+var ErrQuotaExceeded = fmt.Errorf("tts quota exceeded")
+
 type TTS struct {
 	apiKey string
 	model  string
@@ -36,7 +38,9 @@ func (t *TTS) Render(ctx context.Context, transcript, outputPath string) (int, e
 	if !t.Enabled() {
 		return 0, fmt.Errorf("tts: API key not configured")
 	}
-	chunks := splitTranscript(transcript, 1800)
+	// Short chunks are more reliable with Gemini speech: long single responses
+	// can finish naturally while silently omitting the tail of the transcript.
+	chunks := splitTranscript(transcript, 950)
 	var pcm []byte
 	for _, chunk := range chunks {
 		part, err := t.generatePCM(ctx, chunk)
@@ -96,6 +100,9 @@ func (t *TTS) generatePCM(ctx context.Context, transcript string) ([]byte, error
 			continue
 		}
 		if resp.StatusCode >= 400 {
+			if resp.StatusCode == http.StatusTooManyRequests {
+				return nil, fmt.Errorf("%w: %s", ErrQuotaExceeded, clip(string(data), 300))
+			}
 			return nil, fmt.Errorf("tts: Gemini http %d: %s", resp.StatusCode, clip(string(data), 300))
 		}
 		var out struct {
@@ -133,6 +140,14 @@ func splitTranscript(text string, max int) []string {
 		if p == "" {
 			continue
 		}
+		if len([]rune(p)) > max {
+			if current != "" {
+				chunks = append(chunks, current)
+				current = ""
+			}
+			chunks = append(chunks, splitLongSpeech(p, max)...)
+			continue
+		}
 		if current != "" && len([]rune(current))+len([]rune(p))+2 > max {
 			chunks = append(chunks, current)
 			current = p
@@ -144,6 +159,25 @@ func splitTranscript(text string, max int) []string {
 	}
 	if current != "" {
 		chunks = append(chunks, current)
+	}
+	return chunks
+}
+
+func splitLongSpeech(text string, max int) []string {
+	words := strings.Fields(text)
+	var chunks []string
+	var current []string
+	for _, word := range words {
+		candidate := strings.Join(append(current, word), " ")
+		if len([]rune(candidate)) > max && len(current) > 0 {
+			chunks = append(chunks, strings.Join(current, " "))
+			current = []string{word}
+			continue
+		}
+		current = append(current, word)
+	}
+	if len(current) > 0 {
+		chunks = append(chunks, strings.Join(current, " "))
 	}
 	return chunks
 }

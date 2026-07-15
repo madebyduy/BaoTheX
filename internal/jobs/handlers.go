@@ -211,11 +211,17 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 	}
 	item, _ = h.DB.Content.Get(ctx, item.ID)
 
-	// Vietnamese sources are displayed as-is. For foreign articles with a
-	// captured body, one combined translate+summarize call is cheaper than
-	// running separate translation and summarization jobs.
-	if item.Language != "vi" && h.Summarizer != nil && h.Summarizer.Enabled() {
-		if body, bodyErr := h.DB.Content.GetBody(ctx, item.ID); bodyErr == nil && strings.TrimSpace(body.OriginalBody) != "" {
+	// Articles are never public from a headline/excerpt alone. Foreign articles
+	// additionally remain hidden until the Vietnamese edition has been stored.
+	if item.Type == domain.ContentArticle {
+		body, bodyErr := h.DB.Content.GetBody(ctx, item.ID)
+		if bodyErr != nil || len(strings.Fields(body.OriginalBody)) < 120 {
+			return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)
+		}
+		if item.Language != "vi" {
+			if h.Summarizer == nil || !h.Summarizer.Enabled() {
+				return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)
+			}
 			return h.Enqueue.EnqueueTranslate(ctx, item.ID)
 		}
 	}
@@ -284,6 +290,12 @@ func (h *Handlers) handleSummarize(ctx context.Context, j *domain.Job) error {
 
 func (h *Handlers) summarizeArticle(ctx context.Context, item *domain.ContentItem) error {
 	body := deref(item.Excerpt)
+	if stored, err := h.DB.Content.GetBody(ctx, item.ID); err == nil && strings.TrimSpace(stored.OriginalBody) != "" {
+		body = stored.OriginalBody
+	}
+	if len(strings.Fields(body)) < 120 {
+		return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)
+	}
 	out, err := h.Summarizer.SummarizeArticle(ctx, item.Title, body)
 	if err != nil {
 		return err

@@ -32,26 +32,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 	go s.loop(ctx, "cluster", 15*time.Minute, s.clusterStories)
 	go s.loop(ctx, "media", time.Hour, s.backfillMedia)
 	go s.loop(ctx, "audio", time.Hour, s.enqueueMorningAudio)
-	go s.loop(ctx, "video", time.Hour, s.enqueueDailyVideo)
 	go s.loop(ctx, "reaper", 5*time.Minute, s.reapStuck)
 	s.log.Info("scheduler started")
 	<-ctx.Done()
 	s.log.Info("scheduler stopped")
-}
-
-func (s *Scheduler) enqueueDailyVideo(ctx context.Context) error {
-	now := time.Now()
-	if now.Hour() < 6 {
-		return nil
-	}
-	exists, err := s.db.Engagement.HasVideoBriefDate(ctx, now)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	return s.enqueue.EnqueueGenerateVideo(ctx, now)
 }
 
 func (s *Scheduler) enqueueMorningAudio(ctx context.Context) error {

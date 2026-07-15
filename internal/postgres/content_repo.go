@@ -196,6 +196,18 @@ func (r *ContentRepo) Get(ctx context.Context, id int64) (*domain.ContentItem, e
 	return c, err
 }
 
+// GetPublic returns only content that has completed the editorial pipeline.
+// Admin and worker paths continue to use Get so they can inspect drafts.
+func (r *ContentRepo) GetPublic(ctx context.Context, id int64) (*domain.ContentItem, error) {
+	c, err := scanContentWithSource(r.db.Pool.QueryRow(ctx,
+		`SELECT `+contentCols+`, s.name FROM content_items c JOIN sources s ON s.id=c.source_id
+		 WHERE c.id=$1 AND c.status='ready'`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	return c, err
+}
+
 // InsertBody stores the readable source body captured during ingestion.
 func (r *ContentRepo) InsertBody(ctx context.Context, tx pgx.Tx, contentID int64, language, body string) error {
 	_, err := tx.Exec(ctx, `INSERT INTO content_bodies

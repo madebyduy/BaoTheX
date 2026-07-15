@@ -26,13 +26,13 @@ export function DailyBriefPlayer() {
       {brief?.audio_url ? (
         <audio controls preload="metadata" src={brief.audio_url} />
       ) : (
-        <p>Bản tin 5 phút đang được tổng hợp từ những câu chuyện nổi bật nhất.</p>
+        <p>Bản tin mở rộng đang được tổng hợp từ nhiều nguồn và nhiều môn thể thao.</p>
       )}
       <div className="morning-player-foot">
         <span>
           {brief?.duration_seconds
             ? `${Math.max(1, Math.round(brief.duration_seconds / 60))} phút`
-            : "Khoảng 5 phút"}
+            : "Khoảng 6–8 phút"}
         </span>
         <Link href="/premium">Cá nhân hóa bản tin →</Link>
       </div>

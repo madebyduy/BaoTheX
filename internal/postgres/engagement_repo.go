@@ -83,7 +83,10 @@ func (r *EngagementRepo) LatestAudioBrief(ctx context.Context) (*domain.AudioBri
 
 func (r *EngagementRepo) HasAudioBriefDate(ctx context.Context, date time.Time) (bool, error) {
 	var exists bool
-	err := r.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM audio_briefs WHERE brief_date=$1 AND status='ready')`, date.Format("2006-01-02")).Scan(&exists)
+	err := r.db.Pool.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM audio_briefs
+		WHERE brief_date=$1 AND status='ready' AND duration_seconds >= 300)`,
+		date.Format("2006-01-02")).Scan(&exists)
 	return exists, err
 }
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"repwire/internal/briefmedia"
 	"repwire/internal/domain"
 	"repwire/internal/postgres"
 	"repwire/internal/process"
@@ -112,7 +113,7 @@ func (w *Worker) run(ctx context.Context, job *domain.Job, sem chan struct{}) {
 
 func (w *Worker) fail(ctx context.Context, job *domain.Job, cause error) {
 	retryAfter := backoff(job.Attempts)
-	if errors.Is(cause, process.ErrBudgetExceeded) {
+	if errors.Is(cause, process.ErrBudgetExceeded) || errors.Is(cause, briefmedia.ErrQuotaExceeded) {
 		// The daily quota does not recover after a few minutes. A long delay
 		// prevents a depleted key from starving fetch, scoring and media jobs.
 		retryAfter = 6 * time.Hour

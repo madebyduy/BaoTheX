@@ -81,8 +81,9 @@ func (e *Enqueuer) EnqueueSendWeekly(ctx context.Context, userID int64) error {
 func (e *Enqueuer) EnqueueGenerateAudio(ctx context.Context, day time.Time) error {
 	date := day.Format("2006-01-02")
 	return e.repo.Enqueue(ctx, domain.JobGenerateAudio, domain.BriefPayload{Date: date}, postgres.EnqueueOpts{
-		DedupKey: "audio-brief:" + date,
-		Priority: 2,
+		DedupKey:    "audio-brief:" + date,
+		Priority:    2,
+		MaxAttempts: 3,
 	})
 }
 

@@ -25,10 +25,11 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 	if h.TTS == nil || !h.TTS.Enabled() {
 		return fmt.Errorf("audio brief: TTS not configured")
 	}
-	items, _, err := h.DB.Content.List(ctx, postgres.ContentFilter{Sort: "top", Limit: 8, OnlyReady: true})
+	candidates, _, err := h.DB.Content.List(ctx, postgres.ContentFilter{Sort: "top", Limit: 40, OnlyReady: true})
 	if err != nil {
 		return err
 	}
+	items := selectMorningStories(candidates, 14)
 	if len(items) < 3 {
 		return fmt.Errorf("audio brief: not enough ready stories")
 	}
@@ -46,28 +47,84 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 func buildMorningScript(day time.Time, items []domain.ContentItem) (string, string, []int64) {
 	title := "Thể thao 6h · " + day.Format("02/01/2006")
 	var b strings.Builder
-	b.WriteString("Xin chào, đây là Thể thao 6 giờ từ Báo Thể X. Trong khoảng năm phút tới, mời bạn điểm qua những diễn biến đáng chú ý nhất, được tổng hợp từ nhiều nguồn và biên tập bằng tiếng Việt.\n\n")
+	b.WriteString(fmt.Sprintf(
+		"Xin chào quý vị. Hôm nay là %s, ngày %s. Đây là Thể thao 6 giờ từ Báo Thể X. Trong ít phút tới, mời quý vị cùng điểm qua những diễn biến đáng chú ý nhất trong nước và quốc tế, từ bóng đá, bóng rổ, quần vợt đến các môn thể thao khác. Các thông tin được tuyển chọn từ nhiều nguồn uy tín, đối chiếu và biên tập bằng tiếng Việt.\n\n",
+		weekdayVI(day.Weekday()), day.Format("02/01/2006"),
+	))
 	ids := make([]int64, 0, len(items))
 	for i, item := range items {
+		if i == 5 {
+			b.WriteString("Tiếp theo là những diễn biến quốc tế và các câu chuyện đang thu hút sự chú ý của người hâm mộ.\n\n")
+		}
+		if i == 10 {
+			b.WriteString("Ở phần cuối bản tin, mời quý vị đến với các kết quả, video và thông tin bên lề đáng chú ý.\n\n")
+		}
 		ids = append(ids, item.ID)
-		b.WriteString(fmt.Sprintf("Tin thứ %d. %s. ", i+1, item.Title))
+		b.WriteString(fmt.Sprintf("Tin thứ %d, từ %s. %s. ", i+1, sourceForSpeech(item.SourceName), item.Title))
 		if item.Summary != nil && strings.TrimSpace(*item.Summary) != "" {
-			b.WriteString(clipWords(*item.Summary, 85))
+			b.WriteString(clipWords(*item.Summary, 95))
 		} else if item.Excerpt != nil {
-			b.WriteString(clipWords(*item.Excerpt, 85))
+			b.WriteString(clipWords(*item.Excerpt, 95))
 		}
-		for _, point := range item.KeyPoints {
+		for _, point := range item.KeyPoints[:min(2, len(item.KeyPoints))] {
 			if strings.TrimSpace(point) != "" {
-				b.WriteString(" " + clipWords(point, 35) + ".")
+				b.WriteString(" " + clipWords(point, 32) + ".")
 			}
-		}
-		if item.SourceName != "" {
-			b.WriteString(" Nguồn: " + item.SourceName + ".")
 		}
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Bạn vừa nghe Thể thao 6 giờ từ Báo Thể X. Hãy theo dõi đội bóng, giải đấu và vận động viên bạn quan tâm để nhận bản tin phù hợp hơn. Chúc bạn một ngày nhiều năng lượng.")
+	b.WriteString("Quý vị vừa nghe Thể thao 6 giờ của ngày " + day.Format("02/01/2006") + " từ Báo Thể X. Cảm ơn quý vị đã lắng nghe. Hãy theo dõi đội bóng, giải đấu và vận động viên mình quan tâm để nhận bản tin phù hợp hơn. Kính chúc quý vị một ngày nhiều năng lượng và hẹn gặp lại trong bản tin tiếp theo.")
 	return title, b.String(), ids
+}
+
+// selectMorningStories keeps one event from dominating the edition and gives
+// the listener a broader mix of publishers and formats.
+func selectMorningStories(candidates []domain.ContentItem, limit int) []domain.ContentItem {
+	selected := make([]domain.ContentItem, 0, limit)
+	sourceCount := map[string]int{}
+	clusters := map[int64]bool{}
+	for _, item := range candidates {
+		if strings.TrimSpace(item.Title) == "" || strings.TrimSpace(itemSynopsis(item)) == "" {
+			continue
+		}
+		if item.StoryClusterID != nil && clusters[*item.StoryClusterID] {
+			continue
+		}
+		source := strings.ToLower(strings.TrimSpace(item.SourceName))
+		if sourceCount[source] >= 2 {
+			continue
+		}
+		selected = append(selected, item)
+		sourceCount[source]++
+		if item.StoryClusterID != nil {
+			clusters[*item.StoryClusterID] = true
+		}
+		if len(selected) == limit {
+			break
+		}
+	}
+	return selected
+}
+
+func itemSynopsis(item domain.ContentItem) string {
+	if item.Summary != nil && strings.TrimSpace(*item.Summary) != "" {
+		return *item.Summary
+	}
+	if item.Excerpt != nil {
+		return *item.Excerpt
+	}
+	return ""
+}
+
+func sourceForSpeech(source string) string {
+	if strings.TrimSpace(source) == "" {
+		return "Báo Thể X"
+	}
+	return source
+}
+
+func weekdayVI(day time.Weekday) string {
+	return [...]string{"Chủ nhật", "thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy"}[day]
 }
 
 func clipWords(text string, max int) string {

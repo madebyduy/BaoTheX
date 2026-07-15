@@ -1,12 +1,21 @@
 import Link from "next/link";
-import { api, demoItems, type ContentBody, type Item, typeLabel } from "../../lib";
+import { notFound } from "next/navigation";
+import { api, type ContentBody, type Item, typeLabel } from "../../lib";
 import { Footer } from "../../ui";
-import { BackButton, SaveButton, TranslateButton } from "../../action-buttons";
+import { SaveButton, TranslateButton } from "../../action-buttons";
 
 type Detail = {
   item?: Item;
   body?: ContentBody;
   article?: { author?: string; word_count?: number };
+  video?: {
+    youtube_id: string;
+    channel_title?: string;
+    thumbnail_url?: string;
+    description?: string;
+    duration_sec?: number;
+    yt_views?: number;
+  };
   research?: {
     abstract?: string;
     journal?: string;
@@ -28,11 +37,17 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
     api<Item[]>(`/content/${id}/related`, [], 30),
     api<Item[]>("/content?per_page=8&sort=top", [], 30),
   ]);
-  const item = data.item || demoItems.find((x) => x.id === Number(id)) || demoItems[0];
+  if (!data.item) notFound();
+  const item = data.item;
   const body = data.body;
   const translated = body?.vietnamese_body?.trim();
   const sourceText =
-    translated || body?.original_body || data.research?.abstract || item.excerpt || "";
+    translated ||
+    body?.original_body ||
+    data.research?.abstract ||
+    data.video?.description ||
+    item.excerpt ||
+    "";
   const isEnglish = Boolean(body?.original_body && !translated && body.original_language !== "vi");
   // Chỉ nhận tỷ số từ tiêu đề/mô tả ngắn; toàn văn thường chứa ngày tháng,
   // sơ đồ chiến thuật hoặc thống kê dễ bị nhận nhầm là kết quả trận đấu.
@@ -40,7 +55,6 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   return (
     <>
       <main className="wrap article-page">
-        <BackButton />
         <div className="article-kicker">
           <span className="tag">{typeLabel(item.type)}</span>
           <span>{item.source_name || "BaoTheX"}</span>
@@ -113,6 +127,30 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
             </div>
           </aside>
           <div className="article-body">
+            {data.video?.youtube_id ? (
+              <a
+                className="youtube-watch-card"
+                href={
+                  item.canonical_url || `https://www.youtube.com/watch?v=${data.video.youtube_id}`
+                }
+                target="_blank"
+                rel="noreferrer"
+              >
+                {data.video.thumbnail_url || item.image_url ? (
+                  <img src={data.video.thumbnail_url || item.image_url} alt="" />
+                ) : null}
+                <div>
+                  <span>VIDEO YOUTUBE · {data.video.channel_title || item.source_name}</span>
+                  <strong>▶ Xem video trên YouTube</strong>
+                  <small>
+                    {data.video.duration_sec
+                      ? formatDuration(data.video.duration_sec)
+                      : "Video mới"}
+                    {data.video.yt_views ? ` · ${formatViews(data.video.yt_views)} lượt xem` : ""}
+                  </small>
+                </div>
+              </a>
+            ) : null}
             {isEnglish ? (
               <div className="translation-banner">
                 <b>Bài gốc đang ở tiếng Anh</b>
@@ -134,9 +172,15 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
                 </div>
               ) : null}
               <section className="article-section article-main-copy">
-                <h2>{translated ? "Nội dung bài viết" : "Nội dung nguồn"}</h2>
+                <h2>
+                  {item.type === "video"
+                    ? "Giới thiệu video"
+                    : translated
+                      ? "Nội dung bài viết"
+                      : "Nội dung nguồn"}
+                </h2>
                 <ReadableText text={sourceText} />
-                {!body?.original_body && !data.research?.abstract ? (
+                {item.type === "article" && !body?.original_body && !data.research?.abstract ? (
                   <div className="notice">
                     Nguồn RSS hiện chỉ cung cấp phần tóm tắt. Mở bài gốc để đọc toàn văn; hệ thống
                     sẽ hiển thị toàn văn ngay khi nguồn cho phép cung cấp nội dung đầy đủ.
@@ -213,13 +257,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 }
 
 function ReadableText({ text }: { text: string }) {
-  const paragraphs = text
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .filter(
-      (p) => !/^(?:continue reading|read more|tiếp tục đọc|đọc tiếp)\s*(?:\.{3}|…)?$/i.test(p),
-    );
+  const paragraphs = sanitizeArticleText(text);
   return (
     <div className="article-prose">
       {paragraphs.map((p, i) => (
@@ -227,6 +265,44 @@ function ReadableText({ text }: { text: string }) {
       ))}
     </div>
   );
+}
+
+function sanitizeArticleText(text: string) {
+  const withoutConsent = text.replace(
+    /(?:Để hiển thị nội dung này từ YouTube|To display this content from YouTube)[\s\S]*?(?:Thử lại|Try again)/gi,
+    "\n",
+  );
+  const lines = withoutConsent
+    .replace(
+      /(Chấp nhận|Quản lý lựa chọn của tôi|Ảnh bìa:|Phát sóng ngày:|Chia sẻ|Video thực hiện bởi:|Từ khóa cho bài viết này|Đọc thêm|Đọc ít lại)/gi,
+      "\n$1",
+    )
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const paragraphs: string[] = [];
+  let skipNext = false;
+  for (const line of lines) {
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (/^(?:đọc thêm|read more)(?:\b|\s|\.{3}|…)/i.test(line)) break;
+    if (/^(?:video thực hiện bởi|từ khóa cho bài viết này)/i.test(line)) {
+      skipNext = true;
+      continue;
+    }
+    if (
+      /^(?:chấp nhận|accept|quản lý lựa chọn của tôi|manage my choices|chia sẻ|share|đọc ít lại|read less|thử lại|try again|thể thao|\d{1,2}:\d{2})$/i.test(
+        line,
+      ) ||
+      /^(?:ảnh bìa:|phát sóng ngày:)/i.test(line)
+    ) {
+      continue;
+    }
+    paragraphs.push(line);
+  }
+  return paragraphs;
 }
 function ArticleSection({ title, text }: { title: string; text?: string }) {
   return text ? (
@@ -268,4 +344,14 @@ function verificationLabel(value?: string) {
   if (value === "confirmed") return "Đã xác nhận";
   if (value === "verifying") return "Đang xác minh";
   return "Tin đồn / một nguồn";
+}
+function formatDuration(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}:${rest.toString().padStart(2, "0")}`;
+}
+function formatViews(value: number) {
+  return new Intl.NumberFormat("vi-VN", { notation: "compact", maximumFractionDigits: 1 }).format(
+    value,
+  );
 }

@@ -13,7 +13,7 @@ export default function PremiumPage() {
             Đúng đội bạn hơn.
           </h1>
           <p>
-            Nhận tin đã xác minh, bản audio 5 phút và cảnh báo từ những đội, giải đấu, cầu thủ bạn
+            Nhận tin đã xác minh, bản audio 6–8 phút và cảnh báo từ những đội, giải đấu, cầu thủ bạn
             thật sự quan tâm.
           </p>
           <CheckoutButton />
@@ -22,7 +22,7 @@ export default function PremiumPage() {
           <article>
             <b>01</b>
             <h2>Nghe báo mỗi sáng</h2>
-            <p>Bản audio khoảng 5 phút, phát trên web và gửi thẳng qua Telegram.</p>
+            <p>Bản audio 6–8 phút, phát trên web và gửi thẳng qua Telegram.</p>
           </article>
           <article>
             <b>02</b>

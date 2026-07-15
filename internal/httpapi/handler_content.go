@@ -50,7 +50,7 @@ func (s *Server) handleGetContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid id")
 		return
 	}
-	item, err := s.db.Content.Get(r.Context(), id)
+	item, err := s.db.Content.GetPublic(r.Context(), id)
 	if err != nil {
 		writeDomainError(w, s.log, err)
 		return

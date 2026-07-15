@@ -86,7 +86,7 @@ export const demoItems: Item[] = [
   {
     id: 2,
     type: "video",
-    title: "Bản tin nhanh: Những trận đấu không thể bỏ lỡ",
+    title: "Video đáng xem: Những trận đấu không thể bỏ lỡ",
     summary: "Tóm tắt lịch thi đấu, kết quả và câu chuyện sau trận.",
     source_name: "BaoTheX",
   },

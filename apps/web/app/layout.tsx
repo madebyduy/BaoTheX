@@ -2,6 +2,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { SiteHeader } from "./ui";
+import { SiteBackButton } from "./action-buttons";
 
 export const metadata: Metadata = {
   title: "BaoTheX — Báo thể thao chọn lọc",
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="vi">
       <body>
         <SiteHeader />
+        <SiteBackButton />
         {children}
       </body>
     </html>

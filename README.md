@@ -183,8 +183,8 @@ npm install
 npm run dev
 ```
 
-It includes an installable PWA, Web Push controls, Telegram settings, morning
-audio, automatic video recaps and Premium checkout.
+It includes an installable PWA, Web Push controls, Telegram settings, the
+morning audio edition, curated YouTube links and Premium checkout.
 
 For deployment:
 
