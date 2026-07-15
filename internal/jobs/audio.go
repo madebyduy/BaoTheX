@@ -25,7 +25,12 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 	if h.TTS == nil || !h.TTS.Enabled() {
 		return fmt.Errorf("audio brief: TTS not configured")
 	}
-	candidates, _, err := h.DB.Content.List(ctx, postgres.ContentFilter{Sort: "top", Limit: 40, OnlyReady: true})
+	candidates, _, err := h.DB.Content.List(ctx, postgres.ContentFilter{
+		Type:      string(domain.ContentArticle),
+		Sort:      "top",
+		Limit:     60,
+		OnlyReady: true,
+	})
 	if err != nil {
 		return err
 	}
@@ -84,7 +89,7 @@ func selectMorningStories(candidates []domain.ContentItem, limit int) []domain.C
 	sourceCount := map[string]int{}
 	clusters := map[int64]bool{}
 	for _, item := range candidates {
-		if strings.TrimSpace(item.Title) == "" || strings.TrimSpace(itemSynopsis(item)) == "" {
+		if !readyForVietnameseBrief(item) {
 			continue
 		}
 		if item.StoryClusterID != nil && clusters[*item.StoryClusterID] {
@@ -104,6 +109,25 @@ func selectMorningStories(candidates []domain.ContentItem, limit int) []domain.C
 		}
 	}
 	return selected
+}
+
+// readyForVietnameseBrief is the final safety gate before text reaches TTS.
+// Vietnamese publishers can be used directly. Foreign stories must already
+// expose both a Vietnamese title and Vietnamese synopsis; untranslated videos,
+// podcasts and English excerpts are never allowed into the morning edition.
+func readyForVietnameseBrief(item domain.ContentItem) bool {
+	if item.Type != domain.ContentArticle {
+		return false
+	}
+	title := strings.TrimSpace(item.Title)
+	synopsis := strings.TrimSpace(itemSynopsis(item))
+	if title == "" || synopsis == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(item.Language), "vi") {
+		return true
+	}
+	return looksVietnamese(title) && looksVietnamese(synopsis)
 }
 
 func itemSynopsis(item domain.ContentItem) string {

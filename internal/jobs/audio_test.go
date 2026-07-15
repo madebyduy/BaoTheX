@@ -26,3 +26,23 @@ func TestBuildMorningScriptHasDatedGreetingAndClosing(t *testing.T) {
 		t.Fatalf("expected 3 content ids, got %d", len(ids))
 	}
 }
+
+func TestSelectMorningStoriesOnlyAllowsVietnameseReadyArticles(t *testing.T) {
+	viSummary := "Đội tuyển Việt Nam đã hoàn tất buổi tập và sẵn sàng cho trận đấu quan trọng sắp tới."
+	translatedSummary := "Câu lạc bộ đã xác nhận thương vụ sau khi hai bên hoàn tất kiểm tra y tế trong ngày hôm nay."
+	englishSummary := "The club confirmed the transfer after the player completed his medical examination."
+	candidates := []domain.ContentItem{
+		{ID: 1, Type: domain.ContentVideo, Language: "en", Title: "Full game highlights", Summary: &englishSummary},
+		{ID: 2, Type: domain.ContentArticle, Language: "en", Title: "Premier League transfer confirmed", Summary: &englishSummary},
+		{ID: 3, Type: domain.ContentArticle, Language: "en", Title: "Thương vụ tại Ngoại hạng Anh đã được xác nhận", Summary: &translatedSummary},
+		{ID: 4, Type: domain.ContentArticle, Language: "vi", Title: "Đội tuyển Việt Nam sẵn sàng ra sân", Summary: &viSummary},
+	}
+
+	selected := selectMorningStories(candidates, 10)
+	if len(selected) != 2 {
+		t.Fatalf("expected 2 Vietnamese-ready articles, got %d: %#v", len(selected), selected)
+	}
+	if selected[0].ID != 3 || selected[1].ID != 4 {
+		t.Fatalf("unexpected selected ids: %d, %d", selected[0].ID, selected[1].ID)
+	}
+}

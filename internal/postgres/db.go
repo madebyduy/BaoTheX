@@ -32,8 +32,11 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse dsn: %w", err)
 	}
-	cfg.MaxConns = 20
-	cfg.MinConns = 2
+	// Supabase's session pooler has a small per-project connection ceiling.
+	// The API and worker run as separate processes, so keeping five connections
+	// per process leaves room for migrations and operational commands.
+	cfg.MaxConns = 5
+	cfg.MinConns = 1
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 30 * time.Minute
 	cfg.HealthCheckPeriod = time.Minute
