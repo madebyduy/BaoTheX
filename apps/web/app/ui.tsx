@@ -7,6 +7,7 @@ export function SiteHeader() {
   const path = usePathname();
   const links = [
     ["/", "Dòng tin"],
+    ["/goc-nhin", "Góc nhìn"],
     ["/nghien-cuu", "Nghiên cứu"],
     ["/video", "Video"],
     ["/podcast", "Podcast"],

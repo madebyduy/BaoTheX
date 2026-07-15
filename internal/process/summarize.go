@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"repwire/internal/domain"
 	"repwire/internal/postgres"
 )
 
@@ -101,20 +102,95 @@ func (s *Summarizer) SummarizeArticle(ctx context.Context, title, body string) (
 	}
 	var out ArticleSummary
 	if err := json.Unmarshal([]byte(extractJSON(raw)), &out); err != nil {
-		// Some Gemini aliases ignore JSON mode for long prompts. Preserve the
-		// model output instead of dropping a useful summary; callers can still
-		// display it and retry with a stricter prompt later.
-		text := strings.TrimSpace(raw)
-		if text == "" {
-			return nil, fmt.Errorf("parse article summary: %w", err)
-		}
-		out.Summary = &text
-		out.KeyPoints = []string{}
+		return nil, fmt.Errorf("parse article summary: %w", err)
 	}
 	if out.KeyPoints == nil {
 		out.KeyPoints = []string{}
 	}
 	return &out, nil
+}
+
+// ExtractAnalysisClaims is stage one of the analysis pipeline. It does not
+// write prose; it maps agreement, disagreement and source-exclusive claims.
+func (s *Summarizer) ExtractAnalysisClaims(ctx context.Context, title string, materials []domain.AnalysisMaterial) (*domain.AnalysisClaims, error) {
+	prompt := fmt.Sprintf(`Bạn là trưởng ban dữ liệu của một tòa soạn thể thao Việt Nam.
+Từ hồ sơ nhiều nguồn dưới đây, chỉ trích xuất những điều có bằng chứng trong nguyên liệu.
+Phân biệt rõ: điều các nguồn đồng thuận; điểm các nguồn vênh/mâu thuẫn; thông tin chỉ một nguồn nêu; câu hỏi chưa thể kết luận.
+Mỗi ý phải ghi tên nguồn trong ngoặc. Không suy đoán và không biến tin đồn thành sự thật.
+Chỉ trả JSON đúng schema:
+{"consensus":["..."],"conflicts":["..."],"unique_claims":["..."],"open_questions":["..."]}
+
+SỰ KIỆN: %s
+NGUYÊN LIỆU:
+%s`, title, clip(formatAnalysisMaterials(materials), 26000))
+	raw, err := s.complete(ctx, prompt, 1800)
+	if err != nil {
+		return nil, err
+	}
+	var out domain.AnalysisClaims
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &out); err != nil {
+		return nil, fmt.Errorf("parse analysis claims: %w", err)
+	}
+	if out.Consensus == nil {
+		out.Consensus = []string{}
+	}
+	if out.Conflicts == nil {
+		out.Conflicts = []string{}
+	}
+	if out.UniqueClaims == nil {
+		out.UniqueClaims = []string{}
+	}
+	if out.OpenQuestions == nil {
+		out.OpenQuestions = []string{}
+	}
+	return &out, nil
+}
+
+// WriteClusterAnalysis is stage two. It receives the evidence map from stage
+// one and drafts a sourced article for human review; it never publishes.
+func (s *Summarizer) WriteClusterAnalysis(ctx context.Context, title string, materials []domain.AnalysisMaterial, claims domain.AnalysisClaims) (*domain.AnalysisDraft, error) {
+	claimJSON, _ := json.Marshal(claims)
+	prompt := fmt.Sprintf(`Bạn là biên tập viên phân tích của Góc nhìn BaoTheX. Viết một bản NHÁP tiếng Việt để biên tập viên người duyệt.
+Cấu trúc bắt buộc trong body:
+1. Mở — diễn biến mới và quan trọng nhất.
+2. Diễn biến và bối cảnh.
+3. Các nguồn nói gì, đồng thuận hoặc vênh nhau ra sao.
+4. Vì sao sự kiện quan trọng.
+5. Điều còn bỏ ngỏ và điều gì có thể xảy ra tiếp theo.
+
+Quy tắc: mọi khẳng định thực tế phải gắn tên nguồn trong câu hoặc cuối câu; không bịa; không phóng đại; không dùng từ tuyệt đối; nói thẳng điều chưa chắc; không sao chép nguyên văn dài. Ký tên sẽ do hệ thống thêm sau.
+Chỉ trả JSON đúng schema:
+{"title":"tiêu đề phân tích","summary":"3 câu tóm tắt trung lập","body":"bài 900-1400 từ, chia đoạn bằng dòng trống và có tiêu đề mục","key_points":["4-6 ý chính"]}
+
+SỰ KIỆN: %s
+BẢN ĐỒ LUẬN ĐIỂM: %s
+NGUYÊN LIỆU ĐÃ DẪN NGUỒN:
+%s`, title, string(claimJSON), clip(formatAnalysisMaterials(materials), 26000))
+	raw, err := s.complete(ctx, prompt, 5000)
+	if err != nil {
+		return nil, err
+	}
+	var out domain.AnalysisDraft
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &out); err != nil {
+		return nil, fmt.Errorf("parse analysis draft: %w", err)
+	}
+	if strings.TrimSpace(out.Title) == "" || len(strings.Fields(out.Body)) < 250 {
+		return nil, fmt.Errorf("analysis draft is incomplete")
+	}
+	if out.KeyPoints == nil {
+		out.KeyPoints = []string{}
+	}
+	return &out, nil
+}
+
+func formatAnalysisMaterials(materials []domain.AnalysisMaterial) string {
+	var b strings.Builder
+	for i, material := range materials {
+		fmt.Fprintf(&b, "\n--- NGUỒN %d: %s (uy tín %d/5, xuất bản %v) ---\n", i+1, material.SourceName, material.SourceQuality, material.PublishedAt)
+		fmt.Fprintf(&b, "TIÊU ĐỀ: %s\nTÓM TẮT: %s\nÝ CHÍNH: %s\nNỘI DUNG: %s\n",
+			material.Title, material.Summary, strings.Join(material.KeyPoints, " | "), clip(material.Body, 7000))
+	}
+	return b.String()
 }
 
 // TranslateToVietnamese translates source text while preserving meaning and paragraph structure.

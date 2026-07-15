@@ -31,26 +31,46 @@ func (s *Scheduler) Run(ctx context.Context) {
 	go s.loop(ctx, "translate", 10*time.Minute, s.enqueueTranslations)
 	go s.loop(ctx, "cluster", 15*time.Minute, s.clusterStories)
 	go s.loop(ctx, "media", time.Hour, s.backfillMedia)
-	go s.loop(ctx, "audio", time.Hour, s.enqueueMorningAudio)
+	go s.loop(ctx, "audio", time.Hour, s.enqueueDailyAudio)
+	go s.loop(ctx, "analysis-candidates", time.Hour, s.refreshAnalysisCandidates)
 	go s.loop(ctx, "reaper", 5*time.Minute, s.reapStuck)
 	s.log.Info("scheduler started")
 	<-ctx.Done()
 	s.log.Info("scheduler stopped")
 }
 
-func (s *Scheduler) enqueueMorningAudio(ctx context.Context) error {
+func (s *Scheduler) enqueueDailyAudio(ctx context.Context) error {
 	now := time.Now()
-	if now.Hour() < 5 {
-		return nil
+	editions := []struct {
+		name string
+		hour int
+	}{{"morning", 5}, {"evening", 19}}
+	for _, edition := range editions {
+		if now.Hour() < edition.hour {
+			continue
+		}
+		exists, err := s.db.Engagement.HasAudioBriefDate(ctx, now, edition.name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if err := s.enqueue.EnqueueGenerateAudio(ctx, now, edition.name); err != nil {
+				return err
+			}
+		}
 	}
-	exists, err := s.db.Engagement.HasAudioBriefDate(ctx, now)
+	return nil
+}
+
+func (s *Scheduler) refreshAnalysisCandidates(ctx context.Context) error {
+	count, err := s.db.Analysis.RefreshCandidates(ctx, 5)
 	if err != nil {
 		return err
 	}
-	if exists {
-		return nil
+	if count > 0 {
+		s.log.Info("analysis desk refreshed", "candidates", count)
 	}
-	return s.enqueue.EnqueueGenerateAudio(ctx, now)
+	return nil
 }
 
 func (s *Scheduler) backfillMedia(ctx context.Context) error {
@@ -185,7 +205,7 @@ func (s *Scheduler) enqueueDigests(ctx context.Context) error {
 
 // enqueueRescore re-scores a batch of items so freshness decay is applied.
 func (s *Scheduler) enqueueRescore(ctx context.Context) error {
-	ids, err := s.db.Content.IDsToRescore(ctx, 200)
+	ids, err := s.db.Content.IDsToRescore(ctx, 50)
 	if err != nil {
 		return err
 	}

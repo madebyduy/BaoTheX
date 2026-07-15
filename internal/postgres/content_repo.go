@@ -644,23 +644,27 @@ func (r *ContentRepo) SetSummary(ctx context.Context, id int64, summary *string,
 }
 
 // AdminUpdate patches admin-editable fields; nil args are left unchanged.
-func (r *ContentRepo) AdminUpdate(ctx context.Context, id int64, status *string, summary *string, keyPoints []string, editorialBoost *float64) error {
+func (r *ContentRepo) AdminUpdate(ctx context.Context, id int64, title, body, status, summary *string, keyPoints []string, editorialBoost *float64) error {
 	var kp any
 	if keyPoints != nil {
 		kp = keyPoints
 	}
 	tag, err := r.db.Pool.Exec(ctx, `
 		UPDATE content_items SET
-			status          = COALESCE($2::content_status, status),
-			summary         = COALESCE($3, summary),
-			key_points      = COALESCE($4::jsonb, key_points),
-			editorial_boost = COALESCE($5, editorial_boost)
-		WHERE id=$1`, id, status, summary, kp, editorialBoost)
+			title           = COALESCE($2, title),
+			status          = COALESCE($3::content_status, status),
+			summary         = COALESCE($4, summary),
+			key_points      = COALESCE($5::jsonb, key_points),
+			editorial_boost = COALESCE($6, editorial_boost)
+		WHERE id=$1`, id, title, status, summary, kp, editorialBoost)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrNotFound
+	}
+	if body != nil {
+		_, err = r.db.Pool.Exec(ctx, `UPDATE content_bodies SET original_body=$2,vietnamese_body=$2,updated_at=now() WHERE content_id=$1`, id, body)
 	}
 	return nil
 }

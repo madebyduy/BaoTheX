@@ -169,6 +169,8 @@ func (s *Server) adminListContent(r *http.Request, f postgres.ContentFilter, sta
 }
 
 type adminUpdateContentReq struct {
+	Title          *string  `json:"title"`
+	Body           *string  `json:"body"`
 	Status         *string  `json:"status"`
 	Summary        *string  `json:"summary"`
 	KeyPoints      []string `json:"key_points"`
@@ -185,11 +187,26 @@ func (s *Server) handleAdminUpdateContent(w http.ResponseWriter, r *http.Request
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if err := s.db.Content.AdminUpdate(r.Context(), id, req.Status, req.Summary, req.KeyPoints, req.EditorialBoost); err != nil {
+	if err := s.db.Content.AdminUpdate(r.Context(), id, req.Title, req.Body, req.Status, req.Summary, req.KeyPoints, req.EditorialBoost); err != nil {
 		writeDomainError(w, s.log, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true}, nil)
+}
+
+func (s *Server) handleAdminGetContent(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid id")
+		return
+	}
+	item, err := s.db.Content.Get(r.Context(), id)
+	if err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	body, _ := s.db.Content.GetBody(r.Context(), id)
+	writeJSON(w, http.StatusOK, map[string]any{"item": item, "body": body}, nil)
 }
 
 type setTopicsReq struct {

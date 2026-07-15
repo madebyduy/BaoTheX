@@ -44,18 +44,19 @@ type Handlers struct {
 // Register returns the kind→handler map for the worker.
 func (h *Handlers) Register() map[string]HandlerFunc {
 	return map[string]HandlerFunc{
-		domain.JobFetchRSS:       h.handleFetch,
-		domain.JobFetchYouTube:   h.handleFetch,
-		domain.JobFetchPMC:       h.handleFetch,
-		domain.JobFetchPodcast:   h.handleFetch,
-		domain.JobProcessContent: h.handleProcess,
-		domain.JobSummarize:      h.handleSummarize,
-		domain.JobTranslate:      h.handleTranslate,
-		domain.JobScore:          h.handleScore,
-		domain.JobSendDaily:      h.handleSendDaily,
-		domain.JobSendWeekly:     h.handleSendWeekly,
-		domain.JobGenerateAudio:  h.handleGenerateAudio,
-		domain.JobGenerateVideo:  h.handleGenerateVideo,
+		domain.JobFetchRSS:         h.handleFetch,
+		domain.JobFetchYouTube:     h.handleFetch,
+		domain.JobFetchPMC:         h.handleFetch,
+		domain.JobFetchPodcast:     h.handleFetch,
+		domain.JobProcessContent:   h.handleProcess,
+		domain.JobSummarize:        h.handleSummarize,
+		domain.JobTranslate:        h.handleTranslate,
+		domain.JobScore:            h.handleScore,
+		domain.JobSendDaily:        h.handleSendDaily,
+		domain.JobSendWeekly:       h.handleSendWeekly,
+		domain.JobGenerateAudio:    h.handleGenerateAudio,
+		domain.JobGenerateVideo:    h.handleGenerateVideo,
+		domain.JobGenerateAnalysis: h.handleGenerateAnalysis,
 	}
 }
 
@@ -86,6 +87,9 @@ func (h *Handlers) handleTranslate(ctx context.Context, j *domain.Job) error {
 	out, err := h.Summarizer.TranslateAndSummarize(ctx, item.Title, body.OriginalBody)
 	if err != nil {
 		return err
+	}
+	if !looksVietnamese(out.VietnameseTitle) || !looksVietnamese(out.VietnameseBody) || strings.HasPrefix(strings.TrimSpace(out.VietnameseBody), "{") {
+		return h.DB.Content.SetStatus(ctx, p.ContentID, domain.StatusNeedsReview)
 	}
 	if err := h.DB.Content.SetVietnameseContent(ctx, p.ContentID, out.VietnameseTitle, out.VietnameseBody); err != nil {
 		return err
@@ -407,7 +411,7 @@ func (h *Handlers) handleSendDaily(ctx context.Context, j *domain.Job) error {
 	}
 	// Premium members receive the five-minute audio edition in the same chat.
 	if sub, err := h.DB.Engagement.Subscription(ctx, p.UserID); err == nil && sub.Active(time.Now()) {
-		if brief, err := h.DB.Engagement.LatestAudioBrief(ctx); err == nil && brief.AudioURL != nil {
+		if brief, err := h.DB.Engagement.LatestAudioBrief(ctx, "morning"); err == nil && brief.AudioURL != nil {
 			_, err = h.Telegram.SendAudio(ctx, conn.ChatID, *brief.AudioURL, brief.Title+" · BaoTheX Premium")
 			return err
 		}

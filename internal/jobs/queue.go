@@ -78,11 +78,19 @@ func (e *Enqueuer) EnqueueSendWeekly(ctx context.Context, userID int64) error {
 	})
 }
 
-func (e *Enqueuer) EnqueueGenerateAudio(ctx context.Context, day time.Time) error {
+func (e *Enqueuer) EnqueueGenerateAudio(ctx context.Context, day time.Time, edition string) error {
 	date := day.Format("2006-01-02")
-	return e.repo.Enqueue(ctx, domain.JobGenerateAudio, domain.BriefPayload{Date: date}, postgres.EnqueueOpts{
-		DedupKey:    "audio-brief:" + date,
+	return e.repo.Enqueue(ctx, domain.JobGenerateAudio, domain.BriefPayload{Date: date, Edition: edition}, postgres.EnqueueOpts{
+		DedupKey:    "audio-brief:" + edition + ":" + date,
 		Priority:    2,
+		MaxAttempts: 3,
+	})
+}
+
+func (e *Enqueuer) EnqueueGenerateAnalysis(ctx context.Context, clusterID int64) error {
+	return e.repo.Enqueue(ctx, domain.JobGenerateAnalysis, domain.AnalysisPayload{ClusterID: clusterID}, postgres.EnqueueOpts{
+		DedupKey:    fmt.Sprintf("cluster-analysis:%d", clusterID),
+		Priority:    3,
 		MaxAttempts: 3,
 	})
 }

@@ -11,9 +11,10 @@ export default async function Home() {
     "/content?type=article&per_page=30&sort=recent",
     demoItems.filter((item) => item.type === "article"),
   );
-  const [videoFeed, sources] = await Promise.all([
+  const [videoFeed, sources, analyses] = await Promise.all([
     api<Item[]>("/videos?per_page=50&sort=recent", []),
     api<Source[]>("/sources", []),
+    api<Item[]>("/analyses?limit=4", []),
   ]);
   const fitnessSources = sources.filter(
     (source) =>
@@ -207,6 +208,22 @@ export default async function Home() {
                     <b>Xem diễn biến →</b>
                   </div>
                 </Link>
+              ))}
+            </div>
+          </section>
+        ) : null}
+        {analyses.length ? (
+          <section className="sports-section analysis-home-section">
+            <div className="section-heading">
+              <div>
+                <span className="tag">GÓC NHÌN BAOTHEX</span>
+                <h2>Một sự kiện, nhiều nguồn</h2>
+              </div>
+              <Link href="/goc-nhin">Xem toàn bộ phân tích →</Link>
+            </div>
+            <div className="analysis-home-grid">
+              {analyses.map((item) => (
+                <MosaicCard item={item} key={item.id} />
               ))}
             </div>
           </section>

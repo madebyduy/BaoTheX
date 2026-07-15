@@ -69,34 +69,35 @@ func (r *EngagementRepo) MarkPaymentPaid(ctx context.Context, invoice, transacti
 	return
 }
 
-func (r *EngagementRepo) LatestAudioBrief(ctx context.Context) (*domain.AudioBrief, error) {
+func (r *EngagementRepo) LatestAudioBrief(ctx context.Context, edition string) (*domain.AudioBrief, error) {
 	var b domain.AudioBrief
 	err := r.db.Pool.QueryRow(ctx, `
-		SELECT id,brief_date,title,script,audio_url,duration_seconds,content_ids,status,error,created_at,updated_at
-		FROM audio_briefs WHERE status='ready' ORDER BY brief_date DESC LIMIT 1`).
-		Scan(&b.ID, &b.BriefDate, &b.Title, &b.Script, &b.AudioURL, &b.DurationSeconds, &b.ContentIDs, &b.Status, &b.Error, &b.CreatedAt, &b.UpdatedAt)
+		SELECT id,brief_date,edition,title,script,audio_url,duration_seconds,content_ids,status,error,created_at,updated_at
+		FROM audio_briefs WHERE status='ready' AND ($1='' OR edition=$1)
+		ORDER BY brief_date DESC, updated_at DESC LIMIT 1`, edition).
+		Scan(&b.ID, &b.BriefDate, &b.Edition, &b.Title, &b.Script, &b.AudioURL, &b.DurationSeconds, &b.ContentIDs, &b.Status, &b.Error, &b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
 	return &b, err
 }
 
-func (r *EngagementRepo) HasAudioBriefDate(ctx context.Context, date time.Time) (bool, error) {
+func (r *EngagementRepo) HasAudioBriefDate(ctx context.Context, date time.Time, edition string) (bool, error) {
 	var exists bool
 	err := r.db.Pool.QueryRow(ctx, `SELECT EXISTS(
 		SELECT 1 FROM audio_briefs
-		WHERE brief_date=$1 AND status='ready' AND duration_seconds >= 300)`,
-		date.Format("2006-01-02")).Scan(&exists)
+		WHERE brief_date=$1 AND edition=$2 AND status='ready' AND duration_seconds >= 300)`,
+		date.Format("2006-01-02"), edition).Scan(&exists)
 	return exists, err
 }
 
-func (r *EngagementRepo) SaveAudioBrief(ctx context.Context, date time.Time, title, script, audioURL string, duration int, ids []int64) error {
+func (r *EngagementRepo) SaveAudioBrief(ctx context.Context, date time.Time, edition, title, script, audioURL string, duration int, ids []int64) error {
 	_, err := r.db.Pool.Exec(ctx, `
-		INSERT INTO audio_briefs (brief_date,title,script,audio_url,duration_seconds,content_ids,status)
-		VALUES ($1,$2,$3,$4,$5,$6,'ready')
-		ON CONFLICT (brief_date) DO UPDATE SET title=$2,script=$3,audio_url=$4,
-		  duration_seconds=$5,content_ids=$6,status='ready',error=NULL,updated_at=now()`,
-		date.Format("2006-01-02"), title, script, audioURL, duration, ids)
+		INSERT INTO audio_briefs (brief_date,edition,title,script,audio_url,duration_seconds,content_ids,status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'ready')
+		ON CONFLICT (brief_date,edition) DO UPDATE SET title=$3,script=$4,audio_url=$5,
+		  duration_seconds=$6,content_ids=$7,status='ready',error=NULL,updated_at=now()`,
+		date.Format("2006-01-02"), edition, title, script, audioURL, duration, ids)
 	return err
 }
 

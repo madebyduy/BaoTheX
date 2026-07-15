@@ -22,6 +22,10 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 			day = parsed
 		}
 	}
+	edition := payload.Edition
+	if edition != "evening" {
+		edition = "morning"
+	}
 	if h.TTS == nil || !h.TTS.Enabled() {
 		return fmt.Errorf("audio brief: TTS not configured")
 	}
@@ -38,15 +42,49 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 	if len(items) < 3 {
 		return fmt.Errorf("audio brief: not enough ready stories")
 	}
-	title, script, ids := buildMorningScript(day, items)
-	relative := filepath.ToSlash(filepath.Join("audio", day.Format("2006-01-02")+"-the-thao-6h.wav"))
+	var title, script string
+	var ids []int64
+	hourLabel := "6h"
+	if edition == "evening" {
+		title, script, ids = buildEveningScript(day, items)
+		hourLabel = "20h"
+	} else {
+		title, script, ids = buildMorningScript(day, items)
+	}
+	relative := filepath.ToSlash(filepath.Join("audio", day.Format("2006-01-02")+"-the-thao-"+hourLabel+".wav"))
 	output := filepath.Join(h.MediaDir, filepath.FromSlash(relative))
 	duration, err := h.TTS.Render(ctx, script, output)
 	if err != nil {
 		return err
 	}
 	publicURL := strings.TrimRight(h.PublicBaseURL, "/") + "/media/" + relative
-	return h.DB.Engagement.SaveAudioBrief(ctx, day, title, script, publicURL, duration, ids)
+	return h.DB.Engagement.SaveAudioBrief(ctx, day, edition, title, script, publicURL, duration, ids)
+}
+
+func buildEveningScript(day time.Time, items []domain.ContentItem) (string, string, []int64) {
+	title := "Thể thao 20h · " + day.Format("02/01/2006")
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Xin chào quý vị. Hôm nay là %s, ngày %s. Đây là Thể thao 20 giờ từ Báo Thể Ích, bản tổng kết những diễn biến đáng chú ý nhất trong ngày. Các thông tin đã được tuyển chọn, đối chiếu nhiều nguồn và biên tập bằng tiếng Việt.\n\n", weekdayVI(day.Weekday()), day.Format("02/01/2006")))
+	ids := make([]int64, 0, len(items))
+	for i, item := range items {
+		if i == 5 {
+			b.WriteString("Tiếp theo là các diễn biến quốc tế và những góc nhìn đáng chú ý sau một ngày thi đấu.\n\n")
+		}
+		if i == 10 {
+			b.WriteString("Ở phần cuối bản tin là các kết quả, phát biểu và câu chuyện bên lề đáng chú ý.\n\n")
+		}
+		ids = append(ids, item.ID)
+		b.WriteString(fmt.Sprintf("Tin thứ %d, từ %s. %s. ", i+1, sourceForSpeech(item.SourceName), item.Title))
+		b.WriteString(clipWords(itemSynopsis(item), 100))
+		for _, point := range item.KeyPoints[:min(2, len(item.KeyPoints))] {
+			if strings.TrimSpace(point) != "" {
+				b.WriteString(" " + clipWords(point, 34) + ".")
+			}
+		}
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Quý vị vừa nghe Thể thao 20 giờ của ngày " + day.Format("02/01/2006") + " từ Báo Thể Ích. Cảm ơn quý vị đã lắng nghe. Chúc quý vị một buổi tối thư giãn và hẹn gặp lại trong bản tin Thể thao 6 giờ sáng mai.")
+	return title, b.String(), ids
 }
 
 func buildMorningScript(day time.Time, items []domain.ContentItem) (string, string, []int64) {

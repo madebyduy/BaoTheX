@@ -27,6 +27,25 @@ func TestBuildMorningScriptHasDatedGreetingAndClosing(t *testing.T) {
 	}
 }
 
+func TestBuildEveningScriptHasFixedAppointmentAndClosing(t *testing.T) {
+	summary := strings.Repeat("Thông tin thể thao đã được đối chiếu trong ngày. ", 8)
+	items := []domain.ContentItem{
+		{ID: 1, Title: "Tin thứ nhất", SourceName: "Nguồn A", Summary: &summary},
+		{ID: 2, Title: "Tin thứ hai", SourceName: "Nguồn B", Summary: &summary},
+		{ID: 3, Title: "Tin thứ ba", SourceName: "Nguồn C", Summary: &summary},
+	}
+	day := time.Date(2026, 7, 15, 20, 0, 0, 0, time.Local)
+	title, script, ids := buildEveningScript(day, items)
+	for _, expected := range []string{"Thể thao 20h", "Xin chào quý vị", "bản tổng kết", "Báo Thể Ích", "Cảm ơn quý vị đã lắng nghe", "6 giờ sáng mai"} {
+		if !strings.Contains(title+script, expected) {
+			t.Fatalf("evening edition missing %q", expected)
+		}
+	}
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 content ids, got %d", len(ids))
+	}
+}
+
 func TestSelectMorningStoriesOnlyAllowsVietnameseReadyArticles(t *testing.T) {
 	viSummary := "Đội tuyển Việt Nam đã hoàn tất buổi tập và sẵn sàng cho trận đấu quan trọng sắp tới."
 	translatedSummary := "Câu lạc bộ đã xác nhận thương vụ sau khi hai bên hoàn tất kiểm tra y tế trong ngày hôm nay."

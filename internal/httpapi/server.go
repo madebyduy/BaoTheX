@@ -71,6 +71,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+v1+"/content/{id}", s.handleGetContent)
 	mux.HandleFunc("GET "+v1+"/content/{id}/related", s.handleRelated)
 	mux.HandleFunc("GET "+v1+"/clusters/{id}", s.handleGetStoryCluster)
+	mux.HandleFunc("GET "+v1+"/analyses", s.handlePublishedAnalyses)
 	mux.HandleFunc("POST "+v1+"/content/{id}/translate", s.handleTranslate)
 
 	mux.HandleFunc("GET "+v1+"/research", s.handleListResearch)
@@ -152,11 +153,15 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+v1+"/admin/sources/{id}/fetch", requireAdmin(s.handleAdminFetchSource))
 
 	mux.HandleFunc("GET "+v1+"/admin/content", requireAdmin(s.handleAdminListContent))
+	mux.HandleFunc("GET "+v1+"/admin/content/{id}", requireAdmin(s.handleAdminGetContent))
 	mux.HandleFunc("PATCH "+v1+"/admin/content/{id}", requireAdmin(s.handleAdminUpdateContent))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/topics", requireAdmin(s.handleAdminSetTopics))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/highlight", requireAdmin(s.handleAdminHighlight))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/hide", requireAdmin(s.handleAdminHideContent))
 	mux.HandleFunc("PATCH "+v1+"/admin/research/{id}", requireAdmin(s.handleAdminUpdateResearch))
+	mux.HandleFunc("GET "+v1+"/admin/analysis-candidates", requireAdmin(s.handleAdminAnalysisCandidates))
+	mux.HandleFunc("POST "+v1+"/admin/analysis-candidates/{id}/generate", requireAdmin(s.handleAdminGenerateAnalysis))
+	mux.HandleFunc("POST "+v1+"/admin/analysis-candidates/{id}/dismiss", requireAdmin(s.handleAdminDismissAnalysis))
 
 	mux.HandleFunc("GET "+v1+"/admin/jobs", requireAdmin(s.handleAdminListJobs))
 	mux.HandleFunc("POST "+v1+"/admin/jobs/{id}/retry", requireAdmin(s.handleAdminRetryJob))

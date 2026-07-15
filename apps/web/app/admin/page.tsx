@@ -14,6 +14,10 @@ export default function Page() {
             <strong>Duyệt nội dung</strong>
             <div className="meta">Sửa, ẩn, gắn chủ đề →</div>
           </Link>
+          <Link href="/admin/goc-nhin" className="topic">
+            <strong>Bàn phân tích</strong>
+            <div className="meta">Chọn cluster, tạo nháp và duyệt Góc nhìn →</div>
+          </Link>
           <div className="topic">
             <strong>Nguồn dữ liệu</strong>
             <div className="meta">RSS, YouTube, Europe PMC</div>

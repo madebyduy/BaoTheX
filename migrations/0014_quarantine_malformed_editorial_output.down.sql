@@ -1,0 +1,1 @@
+-- Quarantined records require editorial review and are intentionally not republished on rollback.

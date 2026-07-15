@@ -26,6 +26,7 @@ type PaymentOrder struct {
 type AudioBrief struct {
 	ID              int64     `json:"id"`
 	BriefDate       time.Time `json:"brief_date"`
+	Edition         string    `json:"edition"`
 	Title           string    `json:"title"`
 	Script          string    `json:"script,omitempty"`
 	AudioURL        *string   `json:"audio_url,omitempty"`

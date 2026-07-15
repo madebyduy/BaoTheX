@@ -18,20 +18,21 @@ const (
 
 // Job kinds. Keep in sync with the worker handler registry.
 const (
-	JobFetchRSS       = "fetch_rss"
-	JobFetchYouTube   = "fetch_youtube"
-	JobFetchPMC       = "fetch_pmc"
-	JobFetchPodcast   = "fetch_podcast"
-	JobProcessContent = "process_content"
-	JobClassify       = "classify"
-	JobSummarize      = "summarize"
-	JobTranslate      = "translate"
-	JobScore          = "score"
-	JobSendDaily      = "send_daily"
-	JobSendWeekly     = "send_weekly"
-	JobFollowAlert    = "follow_alert"
-	JobGenerateAudio  = "generate_audio_brief"
-	JobGenerateVideo  = "generate_video_brief"
+	JobFetchRSS         = "fetch_rss"
+	JobFetchYouTube     = "fetch_youtube"
+	JobFetchPMC         = "fetch_pmc"
+	JobFetchPodcast     = "fetch_podcast"
+	JobProcessContent   = "process_content"
+	JobClassify         = "classify"
+	JobSummarize        = "summarize"
+	JobTranslate        = "translate"
+	JobScore            = "score"
+	JobSendDaily        = "send_daily"
+	JobSendWeekly       = "send_weekly"
+	JobFollowAlert      = "follow_alert"
+	JobGenerateAudio    = "generate_audio_brief"
+	JobGenerateVideo    = "generate_video_brief"
+	JobGenerateAnalysis = "generate_cluster_analysis"
 )
 
 // Job is one unit of background work stored in the jobs table.
@@ -79,5 +80,10 @@ type DigestPayload struct {
 }
 
 type BriefPayload struct {
-	Date string `json:"date"`
+	Date    string `json:"date"`
+	Edition string `json:"edition"`
+}
+
+type AnalysisPayload struct {
+	ClusterID int64 `json:"cluster_id"`
 }

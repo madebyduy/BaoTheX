@@ -131,7 +131,12 @@ func (s *Server) handleSePayIPN(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLatestAudioBrief(w http.ResponseWriter, r *http.Request) {
-	brief, err := s.db.Engagement.LatestAudioBrief(r.Context())
+	edition := r.URL.Query().Get("edition")
+	if edition != "" && edition != "morning" && edition != "evening" {
+		writeError(w, http.StatusBadRequest, "validation", "edition must be morning or evening")
+		return
+	}
+	brief, err := s.db.Engagement.LatestAudioBrief(r.Context(), edition)
 	if err != nil {
 		writeDomainError(w, s.log, err)
 		return
