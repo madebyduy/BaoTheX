@@ -87,7 +87,13 @@ func (f *RSSFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchResul
 
 	enriched := 0
 	for _, it := range feed.Items {
+		if len(res.Items) >= 20 {
+			break
+		}
 		if it.Link == "" || it.Title == "" {
+			continue
+		}
+		if it.PublishedParsed != nil && time.Since(*it.PublishedParsed) > 72*time.Hour {
 			continue
 		}
 		body := bodyFrom(it)
