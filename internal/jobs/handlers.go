@@ -82,6 +82,9 @@ func (h *Handlers) handleTranslate(ctx context.Context, j *domain.Job) error {
 	if err := h.DB.Content.SetVietnameseContent(ctx, p.ContentID, out.VietnameseTitle, out.VietnameseBody); err != nil {
 		return err
 	}
+	if err := h.DB.Content.ClusterContent(ctx, p.ContentID, out.VietnameseTitle); err != nil {
+		return err
+	}
 	if out.Summary == nil {
 		fallback, err := h.Summarizer.SummarizeArticle(ctx, item.Title, body.OriginalBody)
 		if err != nil {
@@ -218,6 +221,11 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 	status := domain.StatusReady
 	if len(assignments) == 0 {
 		status = domain.StatusNeedsReview
+	}
+	if item.Language == "vi" {
+		if err := h.DB.Content.ClusterContent(ctx, item.ID, item.Title); err != nil {
+			return err
+		}
 	}
 	return h.DB.Content.SetStatus(ctx, item.ID, status)
 }

@@ -66,6 +66,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+v1+"/content", s.handleListContent)
 	mux.HandleFunc("GET "+v1+"/content/{id}", s.handleGetContent)
 	mux.HandleFunc("GET "+v1+"/content/{id}/related", s.handleRelated)
+	mux.HandleFunc("GET "+v1+"/clusters/{id}", s.handleGetStoryCluster)
 	mux.HandleFunc("POST "+v1+"/content/{id}/translate", s.handleTranslate)
 
 	mux.HandleFunc("GET "+v1+"/research", s.handleListResearch)

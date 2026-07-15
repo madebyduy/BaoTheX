@@ -29,6 +29,9 @@ func Store(ctx context.Context, db *postgres.DB, src *domain.Source, raw RawItem
 	if exists, err := db.Content.ExistsByURLHash(ctx, urlHash); err != nil {
 		return 0, err
 	} else if exists {
+		if err := db.Content.BackfillMediaByURLHash(ctx, urlHash, raw.ImageURL, raw.Excerpt); err != nil {
+			return 0, err
+		}
 		if raw.Body != nil && strings.TrimSpace(*raw.Body) != "" {
 			lang := raw.Language
 			if lang == "" {

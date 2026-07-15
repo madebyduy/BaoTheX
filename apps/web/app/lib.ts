@@ -12,6 +12,21 @@ export type Item = {
   status?: string;
   view_count?: number;
   save_count?: number;
+  language?: string;
+  story_cluster_id?: number;
+  cluster_source_count?: number;
+  verification_status?: "rumor" | "verifying" | "confirmed";
+  source_quality?: number;
+};
+export type StoryCluster = {
+  id: number;
+  representative_title: string;
+  primary_content_id?: number;
+  verification_status: "rumor" | "verifying" | "confirmed";
+  source_count: number;
+  created_at: string;
+  updated_at: string;
+  items: Item[];
 };
 export type ContentBody = {
   content_id: number;

@@ -30,27 +30,31 @@ const (
 // ContentItem is the central concept: every piece of content is one of these,
 // with an optional row in a subtype table (articles, research_papers, ...).
 type ContentItem struct {
-	ID             int64         `json:"id"`
-	SourceID       int64         `json:"source_id"`
-	Type           ContentType   `json:"type"`
-	Status         ContentStatus `json:"status"`
-	Title          string        `json:"title"`
-	CanonicalURL   string        `json:"canonical_url"`
-	URLHash        string        `json:"-"`
-	TitleHash      *string       `json:"-"`
-	ImageURL       *string       `json:"image_url,omitempty"`
-	Excerpt        *string       `json:"excerpt,omitempty"`
-	Summary        *string       `json:"summary,omitempty"`
-	KeyPoints      []string      `json:"key_points"`
-	Language       string        `json:"language"`
-	PublishedAt    *time.Time    `json:"published_at,omitempty"`
-	DiscoveredAt   time.Time     `json:"discovered_at"`
-	BaseScore      float64       `json:"base_score"`
-	EditorialBoost float64       `json:"editorial_boost"`
-	FinalScore     float64       `json:"final_score"`
-	ViewCount      int           `json:"view_count"`
-	SaveCount      int           `json:"save_count"`
-	UpdatedAt      time.Time     `json:"updated_at"`
+	ID                 int64         `json:"id"`
+	SourceID           int64         `json:"source_id"`
+	Type               ContentType   `json:"type"`
+	Status             ContentStatus `json:"status"`
+	Title              string        `json:"title"`
+	CanonicalURL       string        `json:"canonical_url"`
+	URLHash            string        `json:"-"`
+	TitleHash          *string       `json:"-"`
+	ImageURL           *string       `json:"image_url,omitempty"`
+	Excerpt            *string       `json:"excerpt,omitempty"`
+	Summary            *string       `json:"summary,omitempty"`
+	KeyPoints          []string      `json:"key_points"`
+	Language           string        `json:"language"`
+	PublishedAt        *time.Time    `json:"published_at,omitempty"`
+	DiscoveredAt       time.Time     `json:"discovered_at"`
+	BaseScore          float64       `json:"base_score"`
+	EditorialBoost     float64       `json:"editorial_boost"`
+	FinalScore         float64       `json:"final_score"`
+	ViewCount          int           `json:"view_count"`
+	SaveCount          int           `json:"save_count"`
+	UpdatedAt          time.Time     `json:"updated_at"`
+	StoryClusterID     *int64        `json:"story_cluster_id,omitempty"`
+	ClusterSourceCount int           `json:"cluster_source_count"`
+	VerificationStatus string        `json:"verification_status,omitempty"`
+	SourceQuality      int           `json:"source_quality"`
 
 	// SourceName is denormalised for read paths; empty unless the query joined sources.
 	SourceName string `json:"source_name,omitempty"`

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"repwire/internal/domain"
+	"repwire/internal/ingest"
 	"repwire/internal/postgres"
 )
 
@@ -28,10 +29,56 @@ func (s *Scheduler) Run(ctx context.Context) {
 	go s.loop(ctx, "digest", 15*time.Minute, s.enqueueDigests)
 	go s.loop(ctx, "rescore", time.Hour, s.enqueueRescore)
 	go s.loop(ctx, "translate", 10*time.Minute, s.enqueueTranslations)
+	go s.loop(ctx, "cluster", 15*time.Minute, s.clusterStories)
+	go s.loop(ctx, "media", time.Hour, s.backfillMedia)
 	go s.loop(ctx, "reaper", 5*time.Minute, s.reapStuck)
 	s.log.Info("scheduler started")
 	<-ctx.Done()
 	s.log.Info("scheduler stopped")
+}
+
+func (s *Scheduler) backfillMedia(ctx context.Context) error {
+	targets, err := s.db.Content.MissingImageTargets(ctx, 6)
+	if err != nil {
+		return err
+	}
+	fetcher := ingest.NewRSSFetcher(nil)
+	updated := 0
+	for _, target := range targets {
+		body, imageURL := fetcher.FetchArticleData(ctx, target.URL)
+		if imageURL == "" {
+			continue
+		}
+		if err := s.db.Content.BackfillMediaByID(ctx, target.ID, imageURL, body); err != nil {
+			s.log.Error("media backfill failed", "content", target.ID, "err", err)
+			continue
+		}
+		updated++
+	}
+	if updated > 0 {
+		s.log.Info("backfilled article media", "count", updated)
+	}
+	return nil
+}
+
+func (s *Scheduler) clusterStories(ctx context.Context) error {
+	ids, err := s.db.Content.IDsWithoutCluster(ctx, 100)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		item, err := s.db.Content.Get(ctx, id)
+		if err != nil {
+			continue
+		}
+		if err := s.db.Content.ClusterContent(ctx, id, item.Title); err != nil {
+			s.log.Error("cluster story failed", "content", id, "err", err)
+		}
+	}
+	if len(ids) > 0 {
+		s.log.Info("clustered stories", "count", len(ids))
+	}
+	return nil
 }
 
 func (s *Scheduler) enqueueTranslations(ctx context.Context) error {

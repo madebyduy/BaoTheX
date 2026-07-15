@@ -30,7 +30,9 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const sourceText =
     translated || body?.original_body || data.research?.abstract || item.excerpt || "";
   const isEnglish = Boolean(body?.original_body && !translated && body.original_language !== "vi");
-  const score = scorelineFrom([item.title, item.summary, item.excerpt, sourceText].join(" "));
+  // Chỉ nhận tỷ số từ tiêu đề/mô tả ngắn; toàn văn thường chứa ngày tháng,
+  // sơ đồ chiến thuật hoặc thống kê dễ bị nhận nhầm là kết quả trận đấu.
+  const score = scorelineFrom([item.title, item.summary, item.excerpt].join(" "));
   const related = await api<Item[]>(`/content/${id}/related`, []);
   const newsroom = await api<Item[]>("/content?per_page=8&sort=top", []);
   return (
@@ -46,6 +48,13 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
         <p className="article-lede">
           {item.summary || item.excerpt || "Bài viết đang được biên tập và tóm tắt."}
         </p>
+        {item.story_cluster_id && (item.cluster_source_count || 0) > 1 ? (
+          <Link className="cluster-callout" href={`/su-kien/${item.story_cluster_id}`}>
+            <span>MỘT SỰ KIỆN · MỌI NGUỒN</span>
+            <strong>{item.cluster_source_count} nguồn đang cùng đưa tin</strong>
+            <b>Xem bản tổng hợp trung lập →</b>
+          </Link>
+        ) : null}
         {item.image_url ? (
           <div className="article-hero">
             <img src={item.image_url} alt="" />
@@ -58,6 +67,16 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               <b>Nguồn</b>
               <span>{item.source_name || "BaoTheX"}</span>
             </div>
+            <div className="article-aside-line">
+              <b>Xác minh</b>
+              <span>{verificationLabel(item.verification_status)}</span>
+            </div>
+            {(item.source_quality || 0) >= 4 ? (
+              <div className="article-aside-line">
+                <b>Uy tín nguồn</b>
+                <span>{item.source_quality}/5 · Nguồn uy tín</span>
+              </div>
+            ) : null}
             {data.article?.author ? (
               <div className="article-aside-line">
                 <b>Tác giả</b>
@@ -238,4 +257,9 @@ function formatDate(value?: string) {
   } catch {
     return "";
   }
+}
+function verificationLabel(value?: string) {
+  if (value === "confirmed") return "Đã xác nhận";
+  if (value === "verifying") return "Đang xác minh";
+  return "Tin đồn / một nguồn";
 }

@@ -1,0 +1,116 @@
+package postgres
+
+import (
+	"context"
+	"errors"
+
+	"github.com/jackc/pgx/v5"
+
+	"repwire/internal/domain"
+)
+
+// ClusterContent attaches an item to the closest recent story, or creates a
+// new one. Titles must be reader-facing Vietnamese before this is called for
+// foreign content.
+func (r *ContentRepo) ClusterContent(ctx context.Context, contentID int64, title string) error {
+	return r.db.WithTx(ctx, func(tx pgx.Tx) error {
+		var existing int64
+		if err := tx.QueryRow(ctx, `SELECT cluster_id FROM story_cluster_items WHERE content_id=$1`, contentID).Scan(&existing); err == nil {
+			return r.refreshCluster(ctx, tx, existing)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+
+		var clusterID int64
+		var similarity float64
+		err := tx.QueryRow(ctx, `
+			SELECT sci.cluster_id,
+			       similarity(COALESCE(c.translated_title,c.title), $2) AS sim
+			FROM content_items c
+			JOIN story_cluster_items sci ON sci.content_id=c.id
+			WHERE c.id <> $1
+			  AND c.type=(SELECT type FROM content_items WHERE id=$1)
+			  AND c.published_at > COALESCE((SELECT published_at FROM content_items WHERE id=$1),now()) - interval '4 days'
+			  AND c.published_at < COALESCE((SELECT published_at FROM content_items WHERE id=$1),now()) + interval '4 days'
+			  AND similarity(COALESCE(c.translated_title,c.title), $2) >= 0.32
+			ORDER BY sim DESC LIMIT 1`, contentID, title).Scan(&clusterID, &similarity)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = tx.QueryRow(ctx, `INSERT INTO story_clusters
+				(representative_title,primary_content_id) VALUES ($1,$2) RETURNING id`, title, contentID).Scan(&clusterID)
+			similarity = 1
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO story_cluster_items (cluster_id,content_id,similarity)
+			VALUES ($1,$2,$3) ON CONFLICT (content_id) DO NOTHING`, clusterID, contentID, similarity); err != nil {
+			return err
+		}
+		return r.refreshCluster(ctx, tx, clusterID)
+	})
+}
+
+func (r *ContentRepo) refreshCluster(ctx context.Context, tx pgx.Tx, clusterID int64) error {
+	_, err := tx.Exec(ctx, `
+		WITH stats AS (
+			SELECT count(DISTINCT c.source_id)::int AS sources,
+			       (array_agg(c.id ORDER BY c.final_score DESC,c.published_at DESC))[1] AS primary_id
+			FROM story_cluster_items sci JOIN content_items c ON c.id=sci.content_id
+			WHERE sci.cluster_id=$1)
+		UPDATE story_clusters sc SET
+			source_count=stats.sources,
+			primary_content_id=stats.primary_id,
+			verification_status=CASE WHEN stats.sources>=3 THEN 'confirmed'
+				WHEN stats.sources=2 THEN 'verifying' ELSE 'rumor' END,
+			updated_at=now()
+		FROM stats WHERE sc.id=$1`, clusterID)
+	return err
+}
+
+// IDsWithoutCluster returns publishable stories that still need grouping.
+func (r *ContentRepo) IDsWithoutCluster(ctx context.Context, limit int) ([]int64, error) {
+	rows, err := r.db.Pool.Query(ctx, `SELECT c.id FROM content_items c
+		WHERE c.status='ready' AND NOT EXISTS
+		(SELECT 1 FROM story_cluster_items sci WHERE sci.content_id=c.id)
+		ORDER BY c.published_at DESC NULLS LAST LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetStoryCluster returns the cluster and its independent source coverage.
+func (r *ContentRepo) GetStoryCluster(ctx context.Context, id int64) (*domain.StoryCluster, error) {
+	var cluster domain.StoryCluster
+	err := r.db.Pool.QueryRow(ctx, `SELECT id,representative_title,primary_content_id,
+		verification_status,source_count,created_at,updated_at FROM story_clusters WHERE id=$1`, id).
+		Scan(&cluster.ID, &cluster.RepresentativeTitle, &cluster.PrimaryContentID,
+			&cluster.VerificationStatus, &cluster.SourceCount, &cluster.CreatedAt, &cluster.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Pool.Query(ctx, `SELECT `+contentCols+`,s.name
+		FROM story_cluster_items sci
+		JOIN content_items c ON c.id=sci.content_id
+		JOIN sources s ON s.id=c.source_id
+		WHERE sci.cluster_id=$1 AND c.status='ready'
+		ORDER BY c.final_score DESC,c.published_at DESC`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cluster.Items, err = collectContent(rows)
+	return &cluster, err
+}

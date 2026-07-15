@@ -14,17 +14,27 @@ import (
 // ContentRepo persists content items and their subtype rows.
 type ContentRepo struct{ db *DB }
 
+type MediaTarget struct {
+	ID  int64
+	URL string
+}
+
 // contentCols is the base column set (optionally joined with source name as source_name).
 const contentCols = `c.id, c.source_id, c.type, c.status, COALESCE(c.translated_title, c.title), c.canonical_url, c.url_hash,
 	c.title_hash, c.image_url, c.excerpt, c.summary, c.key_points, c.language, c.published_at,
-	c.discovered_at, c.base_score, c.editorial_boost, c.final_score, c.view_count, c.save_count, c.updated_at`
+	c.discovered_at, c.base_score, c.editorial_boost, c.final_score, c.view_count, c.save_count, c.updated_at,
+	(SELECT sci.cluster_id FROM story_cluster_items sci WHERE sci.content_id=c.id LIMIT 1),
+	COALESCE((SELECT sc.source_count FROM story_cluster_items sci JOIN story_clusters sc ON sc.id=sci.cluster_id WHERE sci.content_id=c.id LIMIT 1),1),
+	COALESCE((SELECT sc.verification_status FROM story_cluster_items sci JOIN story_clusters sc ON sc.id=sci.cluster_id WHERE sci.content_id=c.id LIMIT 1),'rumor'),
+	(SELECT quality FROM sources sq WHERE sq.id=c.source_id)`
 
 func scanContent(row pgx.Row) (*domain.ContentItem, error) {
 	var c domain.ContentItem
 	if err := row.Scan(&c.ID, &c.SourceID, &c.Type, &c.Status, &c.Title, &c.CanonicalURL,
 		&c.URLHash, &c.TitleHash, &c.ImageURL, &c.Excerpt, &c.Summary, &c.KeyPoints,
 		&c.Language, &c.PublishedAt, &c.DiscoveredAt, &c.BaseScore, &c.EditorialBoost,
-		&c.FinalScore, &c.ViewCount, &c.SaveCount, &c.UpdatedAt); err != nil {
+		&c.FinalScore, &c.ViewCount, &c.SaveCount, &c.UpdatedAt, &c.StoryClusterID,
+		&c.ClusterSourceCount, &c.VerificationStatus, &c.SourceQuality); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -35,7 +45,8 @@ func scanContentWithSource(row pgx.Row) (*domain.ContentItem, error) {
 	if err := row.Scan(&c.ID, &c.SourceID, &c.Type, &c.Status, &c.Title, &c.CanonicalURL,
 		&c.URLHash, &c.TitleHash, &c.ImageURL, &c.Excerpt, &c.Summary, &c.KeyPoints,
 		&c.Language, &c.PublishedAt, &c.DiscoveredAt, &c.BaseScore, &c.EditorialBoost,
-		&c.FinalScore, &c.ViewCount, &c.SaveCount, &c.UpdatedAt, &c.SourceName); err != nil {
+		&c.FinalScore, &c.ViewCount, &c.SaveCount, &c.UpdatedAt, &c.StoryClusterID,
+		&c.ClusterSourceCount, &c.VerificationStatus, &c.SourceQuality, &c.SourceName); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -205,6 +216,48 @@ func (r *ContentRepo) UpsertBodyByURLHash(ctx context.Context, urlHash, language
 		original_body=CASE WHEN length(EXCLUDED.original_body) > length(content_bodies.original_body)
 			THEN EXCLUDED.original_body ELSE content_bodies.original_body END,
 		updated_at=now()`, urlHash, language, body)
+	return err
+}
+
+// BackfillMediaByURLHash upgrades an existing RSS item when a later crawl
+// discovers its social preview image or a better excerpt.
+func (r *ContentRepo) BackfillMediaByURLHash(ctx context.Context, urlHash string, imageURL, excerpt *string) error {
+	_, err := r.db.Pool.Exec(ctx, `UPDATE content_items SET
+		image_url=CASE WHEN COALESCE(image_url,'')='' AND COALESCE($2::text,'')<>'' THEN $2 ELSE image_url END,
+		excerpt=CASE WHEN COALESCE(excerpt,'')='' AND COALESCE($3::text,'')<>'' THEN $3 ELSE excerpt END
+		WHERE url_hash=$1`, urlHash, imageURL, excerpt)
+	return err
+}
+
+// MissingImageTargets returns a small repair batch, prioritising translated
+// international coverage where RSS feeds frequently omit media metadata.
+func (r *ContentRepo) MissingImageTargets(ctx context.Context, limit int) ([]MediaTarget, error) {
+	rows, err := r.db.Pool.Query(ctx, `SELECT id,canonical_url FROM content_items
+		WHERE status='ready' AND COALESCE(image_url,'')='' AND COALESCE(canonical_url,'')<>''
+		ORDER BY (language<>'vi') DESC,published_at DESC NULLS LAST LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var targets []MediaTarget
+	for rows.Next() {
+		var target MediaTarget
+		if err := rows.Scan(&target.ID, &target.URL); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
+
+func (r *ContentRepo) BackfillMediaByID(ctx context.Context, id int64, imageURL, excerpt string) error {
+	if imageURL == "" && excerpt == "" {
+		return nil
+	}
+	_, err := r.db.Pool.Exec(ctx, `UPDATE content_items SET
+		image_url=CASE WHEN COALESCE(image_url,'')='' AND $2<>'' THEN $2 ELSE image_url END,
+		excerpt=CASE WHEN COALESCE(excerpt,'')='' AND $3<>'' THEN LEFT($3,1200) ELSE excerpt END,
+		updated_at=now() WHERE id=$1`, id, imageURL, excerpt)
 	return err
 }
 

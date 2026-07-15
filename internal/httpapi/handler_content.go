@@ -126,6 +126,20 @@ func (s *Server) handleRelated(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, nonNilItems(items), nil)
 }
 
+func (s *Server) handleGetStoryCluster(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid cluster id")
+		return
+	}
+	cluster, err := s.db.Content.GetStoryCluster(r.Context(), id)
+	if err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cluster, nil)
+}
+
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	var userID int64
 	if u := userFrom(r.Context()); u != nil {

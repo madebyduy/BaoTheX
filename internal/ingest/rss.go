@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -90,9 +91,14 @@ func (f *RSSFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchResul
 			continue
 		}
 		body := bodyFrom(it)
-		if len([]rune(body)) < 600 && enriched < 8 {
-			if full := f.fetchArticleBody(ctx, it.Link); len([]rune(full)) > len([]rune(body)) {
+		imageURL := imageFrom(it)
+		if (len([]rune(body)) < 600 || imageURL == "") && enriched < 12 {
+			full, pageImage := f.FetchArticleData(ctx, it.Link)
+			if len([]rune(full)) > len([]rune(body)) {
 				body = full
+			}
+			if imageURL == "" {
+				imageURL = pageImage
 			}
 			enriched++
 		}
@@ -109,8 +115,8 @@ func (f *RSSFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchResul
 		if excerpt := excerptFrom(it); excerpt != "" {
 			raw.Excerpt = ptr(excerpt)
 		}
-		if img := imageFrom(it); img != "" {
-			raw.ImageURL = ptr(img)
+		if imageURL != "" {
+			raw.ImageURL = ptr(imageURL)
 		}
 		if it.Author != nil && it.Author.Name != "" {
 			raw.Author = ptr(it.Author.Name)
@@ -124,31 +130,62 @@ func (f *RSSFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchResul
 // fetchArticleBody is a bounded best-effort fallback for feeds that expose only
 // an excerpt. It reads semantic article/main content, never scripts/styles,
 // and is capped to a small number of items per feed refresh.
-func (f *RSSFetcher) fetchArticleBody(ctx context.Context, articleURL string) string {
+// FetchArticleData extracts readable text and the social preview image from an
+// article page. It is also used by the periodic media repair pass.
+func (f *RSSFetcher) FetchArticleData(ctx context.Context, articleURL string) (string, string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, articleURL, nil)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return ""
+		return "", ""
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	doc, err := html.Parse(bytes.NewReader(data))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	var candidates []*html.Node
+	var imageURL string
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "meta" && imageURL == "" {
+			var key, content string
+			for _, attr := range n.Attr {
+				switch strings.ToLower(attr.Key) {
+				case "property", "name":
+					key = strings.ToLower(attr.Val)
+				case "content":
+					content = strings.TrimSpace(attr.Val)
+				}
+			}
+			if key == "og:image" || key == "og:image:secure_url" || key == "twitter:image" || key == "twitter:image:src" {
+				imageURL = absoluteURL(articleURL, content)
+			}
+		}
+		if n.Type == html.ElementNode && n.Data == "link" && imageURL == "" {
+			var rel, href string
+			for _, attr := range n.Attr {
+				if strings.ToLower(attr.Key) == "rel" {
+					rel = strings.ToLower(attr.Val)
+				}
+				if strings.ToLower(attr.Key) == "href" {
+					href = attr.Val
+				}
+			}
+			if rel == "image_src" {
+				imageURL = absoluteURL(articleURL, href)
+			}
+		}
 		if n.Type == html.ElementNode && (n.Data == "article" || n.Data == "main") {
 			candidates = append(candidates, n)
 		}
@@ -159,10 +196,29 @@ func (f *RSSFetcher) fetchArticleBody(ctx context.Context, articleURL string) st
 	walk(doc)
 	for _, candidate := range candidates {
 		if text := cleanReadableText(nodeText(candidate)); len([]rune(text)) > 600 {
-			return text
+			return text, imageURL
 		}
 	}
-	return ""
+	return "", imageURL
+}
+
+func absoluteURL(baseURL, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if u.IsAbs() {
+		return u.String()
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	return base.ResolveReference(u).String()
 }
 
 func nodeText(n *html.Node) string {

@@ -97,6 +97,7 @@ export default async function Home() {
                   {lead.source_name || "BaoTheX"}
                   {scorelineFrom(lead) ? ` · TỶ SỐ ${scorelineFrom(lead)}` : ""}
                 </span>
+                <StorySignals item={lead} />
                 <h3>{lead.title}</h3>
                 <p>{lead.summary || lead.excerpt || "Tin thể thao đang được biên tập."}</p>
                 <b>Đọc bài →</b>
@@ -209,6 +210,7 @@ function NewsTile({ item }: { item: Item }) {
       )}
       <div className="news-tile-copy">
         <span>{item.source_name || "BaoTheX"}</span>
+        <StorySignals item={item} />
         <strong>{item.title}</strong>
         <small>{item.summary || item.excerpt || "Đọc nội dung đầy đủ."}</small>
       </div>
@@ -227,6 +229,7 @@ function MosaicCard({ item }: { item: Item }) {
         <span>
           {item.source_name || "BaoTheX"} · {item.type === "video" ? "VIDEO" : "TIN MỚI"}
         </span>
+        <StorySignals item={item} />
         <h3>{item.title}</h3>
         <p>{item.summary || item.excerpt || "Xem nội dung đầy đủ."}</p>
       </div>
@@ -247,12 +250,32 @@ function NewsRow({ item, compact = false }: { item: Item; compact?: boolean }) {
           {item.source_name || "BaoTheX"} · {item.type === "video" ? "VIDEO" : "TIN THỂ THAO"}
           {score ? ` · TỶ SỐ ${score}` : ""}
         </span>
+        <StorySignals item={item} compact />
         <strong>{item.title}</strong>
         {!compact && (
           <small>{item.summary || item.excerpt || "Đọc bản tin đầy đủ tại BaoTheX."}</small>
         )}
       </div>
     </Link>
+  );
+}
+function StorySignals({ item, compact = false }: { item: Item; compact?: boolean }) {
+  const status = item.verification_status || "rumor";
+  const labels = {
+    rumor: "Tin đồn",
+    verifying: "Đang xác minh",
+    confirmed: "Đã xác nhận",
+  } as const;
+  return (
+    <div className={`story-signals ${compact ? "compact" : ""}`}>
+      {(item.cluster_source_count || 0) > 1 ? (
+        <span className="signal multi-source">{item.cluster_source_count} nguồn</span>
+      ) : null}
+      <span className={`signal ${status}`}>{labels[status]}</span>
+      {(item.source_quality || 0) >= 4 ? (
+        <span className="signal trusted">Nguồn uy tín</span>
+      ) : null}
+    </div>
   );
 }
 function scorelineFrom(item: Item) {
