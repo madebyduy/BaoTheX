@@ -401,7 +401,8 @@ function StorySignals({ item, compact = false }: { item: Item; compact?: boolean
   );
 }
 function scorelineFrom(item: Item) {
-  const text = [item.title, item.summary, item.excerpt].filter(Boolean).join(" ");
+  if (item.type !== "article") return "";
+  const text = item.title;
   const match = text.match(/\b(\d{1,2})\s*[-–:]\s*(\d{1,2})\b/);
   return match ? `${match[1]}-${match[2]}` : "";
 }

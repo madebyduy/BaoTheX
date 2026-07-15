@@ -49,9 +49,10 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
     item.excerpt ||
     "";
   const isEnglish = Boolean(body?.original_body && !translated && body.original_language !== "vi");
-  // Chỉ nhận tỷ số từ tiêu đề/mô tả ngắn; toàn văn thường chứa ngày tháng,
-  // sơ đồ chiến thuật hoặc thống kê dễ bị nhận nhầm là kết quả trận đấu.
-  const score = scorelineFrom([item.title, item.summary, item.excerpt].join(" "));
+  // Chỉ bài báo kết quả có tỷ số ngay trong tiêu đề mới được gắn badge.
+  // Video thường chứa timecode như 0:00, 1:35 nên tuyệt đối không suy diễn
+  // các con số trong mô tả thành tỷ số trận đấu.
+  const score = item.type === "article" ? scorelineFrom(item.title) : "";
   return (
     <>
       <main className="wrap article-page">

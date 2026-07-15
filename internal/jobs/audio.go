@@ -53,7 +53,7 @@ func buildMorningScript(day time.Time, items []domain.ContentItem) (string, stri
 	title := "Thể thao 6h · " + day.Format("02/01/2006")
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(
-		"Xin chào quý vị. Hôm nay là %s, ngày %s. Đây là Thể thao 6 giờ từ Báo Thể X. Trong ít phút tới, mời quý vị cùng điểm qua những diễn biến đáng chú ý nhất trong nước và quốc tế, từ bóng đá, bóng rổ, quần vợt đến các môn thể thao khác. Các thông tin được tuyển chọn từ nhiều nguồn uy tín, đối chiếu và biên tập bằng tiếng Việt.\n\n",
+		"Xin chào quý vị. Hôm nay là %s, ngày %s. Đây là Thể thao 6 giờ từ Báo Thể Ích. Trong ít phút tới, mời quý vị cùng điểm qua những diễn biến đáng chú ý nhất trong nước và quốc tế, từ bóng đá, bóng rổ, quần vợt đến các môn thể thao khác. Các thông tin được tuyển chọn từ nhiều nguồn uy tín, đối chiếu và biên tập bằng tiếng Việt.\n\n",
 		weekdayVI(day.Weekday()), day.Format("02/01/2006"),
 	))
 	ids := make([]int64, 0, len(items))
@@ -78,7 +78,7 @@ func buildMorningScript(day time.Time, items []domain.ContentItem) (string, stri
 		}
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Quý vị vừa nghe Thể thao 6 giờ của ngày " + day.Format("02/01/2006") + " từ Báo Thể X. Cảm ơn quý vị đã lắng nghe. Hãy theo dõi đội bóng, giải đấu và vận động viên mình quan tâm để nhận bản tin phù hợp hơn. Kính chúc quý vị một ngày nhiều năng lượng và hẹn gặp lại trong bản tin tiếp theo.")
+	b.WriteString("Quý vị vừa nghe Thể thao 6 giờ của ngày " + day.Format("02/01/2006") + " từ Báo Thể Ích. Cảm ơn quý vị đã lắng nghe. Hãy theo dõi đội bóng, giải đấu và vận động viên mình quan tâm để nhận bản tin phù hợp hơn. Kính chúc quý vị một ngày nhiều năng lượng và hẹn gặp lại trong bản tin tiếp theo.")
 	return title, b.String(), ids
 }
 
@@ -142,7 +142,7 @@ func itemSynopsis(item domain.ContentItem) string {
 
 func sourceForSpeech(source string) string {
 	if strings.TrimSpace(source) == "" {
-		return "Báo Thể X"
+		return "Báo Thể Ích"
 	}
 	return source
 }

@@ -67,7 +67,7 @@ func buildVideoScript(day time.Time, items []domain.ContentItem) (string, string
 	stories := make([]briefmedia.VideoStory, 0, len(items))
 	ids := make([]int64, 0, len(items))
 	var script strings.Builder
-	script.WriteString("Đây là tin nhanh thể thao hôm nay từ Báo Thể X. ")
+	script.WriteString("Đây là tin nhanh thể thao hôm nay từ Báo Thể Ích. ")
 	for i, item := range items {
 		ids = append(ids, item.ID)
 		stories = append(stories, briefmedia.VideoStory{Title: cleanVideoText(item.Title), Source: cleanVideoText(item.SourceName)})
@@ -79,7 +79,7 @@ func buildVideoScript(day time.Time, items []domain.ContentItem) (string, string
 		}
 		script.WriteString(". ")
 	}
-	script.WriteString("Theo dõi Báo Thể X để đọc nhiều góc nhìn và nhận bản tin theo đội bóng bạn quan tâm.")
+	script.WriteString("Theo dõi Báo Thể Ích để đọc nhiều góc nhìn và nhận bản tin theo đội bóng bạn quan tâm.")
 	return title, script.String(), stories, ids
 }
 
