@@ -19,6 +19,7 @@ var blockTagRE = regexp.MustCompile(`(?is)<(?:script|style|noscript|svg)[^>]*>.*
 var commentRE = regexp.MustCompile(`(?s)<!--.*?-->`)
 var imageTagRE = regexp.MustCompile(`(?i)<img[^>]+(?:src|data-src)=["']([^"']+)["']`)
 var junkMarkers = []string{".custom-article-container", "--color-foreground", "var(--color-", "sourcemappingurl", "font-family:", "color-text:", "webpack", "__next_f.push", "application/ld+json"}
+var trailingReadMoreRE = regexp.MustCompile(`(?i)(?:\n\s*)+(?:continue reading|read more|tiếp tục đọc|đọc tiếp)\s*(?:\.{3}|…)?\s*$`)
 
 func stripHTML(s string) string {
 	s = blockTagRE.ReplaceAllString(s, "\n")
@@ -48,6 +49,7 @@ func cleanReadableText(s string) string {
 		}
 	}
 	text := strings.TrimSpace(strings.Join(clean, "\n\n"))
+	text = strings.TrimSpace(trailingReadMoreRE.ReplaceAllString(text, ""))
 	if len([]rune(text)) < 24 {
 		return ""
 	}
