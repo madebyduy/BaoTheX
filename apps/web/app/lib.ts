@@ -60,53 +60,46 @@ export async function api<T>(path: string, fallback: T): Promise<T> {
 export const demoItems: Item[] = [
   {
     id: 1,
-    type: "research",
-    title: "Tăng volume tập giúp cơ phát triển tới khoảng 20 set mỗi nhóm cơ mỗi tuần",
-    summary: "Phân tích gộp mới cho thấy lợi ích giảm dần sau ngưỡng này.",
-    source_name: "Journal of Strength & Conditioning",
+    type: "article",
+    title: "Tin thể thao nổi bật trong ngày",
+    summary: "Những diễn biến đáng chú ý nhất từ sân cỏ và các giải đấu lớn.",
+    source_name: "BaoTheX",
   },
   {
     id: 2,
     type: "video",
-    title: "Cách hiểu đúng về EMG và bài đẩy ngực",
-    summary: "Giải thích các biến số kỹ thuật và ý nghĩa thực tế của chỉ số EMG.",
-    source_name: "Kênh khoa học tập luyện",
+    title: "Bản tin nhanh: Những trận đấu không thể bỏ lỡ",
+    summary: "Tóm tắt lịch thi đấu, kết quả và câu chuyện sau trận.",
+    source_name: "BaoTheX",
   },
   {
     id: 3,
     type: "article",
-    title: "Protein, leucine và thời điểm nạp trong ngày",
-    summary: "Những điều nghiên cứu hiện tại thực sự cho chúng ta biết.",
-    source_name: "BaoTheX biên tập",
-  },
-  {
-    id: 4,
-    type: "podcast",
-    title: "Phục hồi, giấc ngủ và hiệu suất tập luyện",
-    summary: "Cuộc trò chuyện dài về cách xây dựng lịch tập bền vững.",
-    source_name: "Iron Culture",
+    title: "Thể thao Việt Nam hướng đến mục tiêu mới",
+    summary: "Các vận động viên và đội tuyển đang chuẩn bị cho những giải đấu quan trọng.",
+    source_name: "BaoTheX",
   },
 ];
 export const demoTopics: Topic[] = [
-  "Phì đại cơ",
-  "Sức mạnh",
-  "Dinh dưỡng",
-  "Creatine",
-  "Phục hồi",
-  "Giấc ngủ",
-  "Cardio",
-  "Chấn thương",
+  "Bóng đá Việt Nam",
+  "Bóng đá quốc tế",
+  "Bóng rổ",
+  "Tennis",
+  "Thể thao Việt Nam",
+  "F1 & thể thao motor",
+  "Esports",
+  "Các môn khác",
 ].map((name, i) => ({
   id: i + 1,
+  name,
   slug: name
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/đ/g, "d")
-    .replace(/\s+/g, "-"),
-  name,
+    .replace(/[^a-z0-9]+/g, "-"),
   follower_count: 20 + i * 13,
-  description: `Kiến thức và nội dung chọn lọc về ${name.toLowerCase()}.`,
+  description: `Tin mới nhất về ${name.toLowerCase()}.`,
 }));
 export function typeLabel(type: string) {
   return (

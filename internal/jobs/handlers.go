@@ -59,6 +59,11 @@ func (h *Handlers) handleTranslate(ctx context.Context, j *domain.Job) error {
 	if h.Summarizer == nil || !h.Summarizer.Enabled() {
 		return fmt.Errorf("translator: LLM_API_KEY not configured")
 	}
+	if ok, err := h.Summarizer.BudgetOK(ctx); err != nil {
+		return err
+	} else if !ok {
+		return process.ErrBudgetExceeded
+	}
 	body, err := h.DB.Content.GetBody(ctx, p.ContentID)
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil
@@ -74,7 +79,7 @@ func (h *Handlers) handleTranslate(ctx context.Context, j *domain.Job) error {
 	if err != nil {
 		return err
 	}
-	if err := h.DB.Content.SetVietnameseBody(ctx, p.ContentID, out.VietnameseBody); err != nil {
+	if err := h.DB.Content.SetVietnameseContent(ctx, p.ContentID, out.VietnameseTitle, out.VietnameseBody); err != nil {
 		return err
 	}
 	if out.Summary == nil {
@@ -194,6 +199,15 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 		return err
 	}
 	item, _ = h.DB.Content.Get(ctx, item.ID)
+
+	// Vietnamese sources are displayed as-is. For foreign articles with a
+	// captured body, one combined translate+summarize call is cheaper than
+	// running separate translation and summarization jobs.
+	if item.Language != "vi" && h.Summarizer != nil && h.Summarizer.Enabled() {
+		if body, bodyErr := h.DB.Content.GetBody(ctx, item.ID); bodyErr == nil && strings.TrimSpace(body.OriginalBody) != "" {
+			return h.Enqueue.EnqueueTranslate(ctx, item.ID)
+		}
+	}
 
 	// Decide whether to summarize.
 	if h.shouldSummarize(item) {

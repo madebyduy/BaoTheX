@@ -1,13 +1,13 @@
 # BaoTheX
 
-BaoTheX — nền tảng tổng hợp bài viết, nghiên cứu, video và podcast fitness cho người Việt.
+BaoTheX — báo thể thao tổng hợp, theo dõi tin nóng trong ngày từ các nguồn báo chí, video và podcast đáng tin cậy cho người Việt.
 
 ## Backend
 
-Fitness information hub: aggregates and explains new content about gym, fitness
-and training science from articles, research, YouTube and podcasts. Users follow
-topics / people / sources, read sourced summaries, save content and receive a
-personalised Telegram brief.
+Sports newsroom: aggregates important daily sports news from Vietnamese and
+international publications, YouTube and podcasts. Users follow sports, people
+and sources, read sourced summaries, save content and receive a personalised
+Telegram brief.
 
 **Stack:** Go (API + worker) · PostgreSQL 16 (DB + queue + full-text search) ·
 Telegram Bot API · Docker Compose. The **Next.js frontend is built separately**

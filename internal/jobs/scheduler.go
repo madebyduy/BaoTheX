@@ -27,10 +27,27 @@ func (s *Scheduler) Run(ctx context.Context) {
 	go s.loop(ctx, "fetch", time.Minute, s.enqueueDueFetches)
 	go s.loop(ctx, "digest", 15*time.Minute, s.enqueueDigests)
 	go s.loop(ctx, "rescore", time.Hour, s.enqueueRescore)
+	go s.loop(ctx, "translate", 10*time.Minute, s.enqueueTranslations)
 	go s.loop(ctx, "reaper", 5*time.Minute, s.reapStuck)
 	s.log.Info("scheduler started")
 	<-ctx.Done()
 	s.log.Info("scheduler stopped")
+}
+
+func (s *Scheduler) enqueueTranslations(ctx context.Context) error {
+	ids, err := s.db.Content.IDsPendingTranslation(ctx, 50)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := s.enqueue.EnqueueTranslate(ctx, id); err != nil {
+			s.log.Error("enqueue translation failed", "content", id, "err", err)
+		}
+	}
+	if len(ids) > 0 {
+		s.log.Info("enqueued translations", "count", len(ids))
+	}
+	return nil
 }
 
 // loop runs fn immediately (after a short delay) and then every interval.

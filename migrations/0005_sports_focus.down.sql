@@ -1,0 +1,2 @@
+DELETE FROM sources WHERE name IN ('VnExpress Thể thao','Thanh Niên Bóng đá quốc tế','Soha Thể thao Việt Nam','BBC Sport Football','The Guardian Sport','Le Monde Sports','ESPN News','Sky Sports Football','FIFA (YouTube)','NBA (YouTube)','VFF Channel');
+UPDATE sources SET enabled = TRUE WHERE name IN ('Stronger by Science','Barbell Medicine','Examine','Renaissance Periodization','Bret Contreras','Jeff Nippard (YouTube)','Renaissance Periodization (YouTube)');

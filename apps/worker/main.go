@@ -47,7 +47,7 @@ func main() {
 		YouTube:        ingest.NewYouTubeFetcher(httpClient, cfg.YouTubeAPIKey, db),
 		PMC:            ingest.NewEuropePMCFetcher(httpClient),
 		Podcast:        ingest.NewPodcastFetcher(httpClient),
-		Summarizer:     process.NewSummarizer(cfg.LLMAPIKey, cfg.LLMBaseURL, cfg.LLMModel, cfg.LLMDailyBudgetUSD, db.LLM()),
+		Summarizer:     process.NewSummarizer(cfg.LLMAPIKey, cfg.LLMBaseURL, cfg.LLMModel, cfg.LLMDailyBudgetUSD, cfg.LLMMaxCallsPerHour, db.LLM()),
 		Telegram:       tgClient,
 		Digest:         telegram.NewDigest(db, cfg.PublicBaseURL),
 		ScoreThreshold: cfg.LLMScoreThreshold,

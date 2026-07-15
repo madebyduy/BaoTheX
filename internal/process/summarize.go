@@ -23,18 +23,20 @@ type Summarizer struct {
 	model   string
 	llm     *postgres.LLMRepo
 
-	dailyBudgetUSD float64
+	dailyBudgetUSD  float64
+	maxCallsPerHour int
 }
 
 // NewSummarizer constructs a Summarizer.
-func NewSummarizer(apiKey, baseURL, model string, dailyBudgetUSD float64, llm *postgres.LLMRepo) *Summarizer {
+func NewSummarizer(apiKey, baseURL, model string, dailyBudgetUSD float64, maxCallsPerHour int, llm *postgres.LLMRepo) *Summarizer {
 	return &Summarizer{
-		client:         &http.Client{Timeout: 60 * time.Second},
-		apiKey:         apiKey,
-		baseURL:        baseURL,
-		model:          model,
-		llm:            llm,
-		dailyBudgetUSD: dailyBudgetUSD,
+		client:          &http.Client{Timeout: 60 * time.Second},
+		apiKey:          apiKey,
+		baseURL:         baseURL,
+		model:           model,
+		llm:             llm,
+		dailyBudgetUSD:  dailyBudgetUSD,
+		maxCallsPerHour: maxCallsPerHour,
 	}
 }
 
@@ -46,6 +48,15 @@ var ErrBudgetExceeded = fmt.Errorf("llm daily budget exceeded")
 
 // BudgetOK reports whether there is remaining daily budget.
 func (s *Summarizer) BudgetOK(ctx context.Context) (bool, error) {
+	if s.maxCallsPerHour > 0 {
+		calls, err := s.llm.CallsLastHour(ctx)
+		if err != nil {
+			return false, err
+		}
+		if calls >= s.maxCallsPerHour {
+			return false, nil
+		}
+	}
 	if s.dailyBudgetUSD <= 0 {
 		return true, nil
 	}
@@ -62,7 +73,7 @@ type ArticleSummary struct {
 	KeyPoints []string `json:"key_points"`
 }
 
-const articlePrompt = `Bạn tóm tắt nội dung fitness. Trả về JSON đúng schema, không thêm text nào khác.
+const articlePrompt = `Bạn là biên tập viên báo thể thao. Tóm tắt chính xác nội dung bài báo thể thao, giữ nguyên tên vận động viên, đội bóng, tỷ số, thời gian và giải đấu. Trả về JSON đúng schema, không thêm text nào khác.
 {
   "summary": "3-4 câu, ngôn ngữ đơn giản, không phóng đại, viết lại hoàn toàn bằng lời của bạn (KHÔNG trích nguyên văn)",
   "key_points": ["ý 1", "ý 2", "ý 3"]
@@ -73,9 +84,17 @@ Không dùng ngôn ngữ tuyệt đối ("chứng minh", "phải", "luôn luôn"
 TIÊU ĐỀ: %s
 NỘI DUNG: %s`
 
+const articlePromptVI = `Bạn là biên tập viên báo thể thao Việt Nam. Tóm tắt chính xác nội dung, giữ nguyên tên vận động viên, câu lạc bộ, giải đấu, tỷ số, số liệu và thời gian. Không thêm suy đoán.
+Chỉ trả về JSON hợp lệ theo schema:
+{"summary":"3-4 câu tiếng Việt rõ ràng, trung lập","key_points":["3-5 ý chính"]}
+Nếu dữ liệu không đủ, trả {"summary":null,"key_points":[]}.
+
+TIÊU ĐỀ: %s
+NỘI DUNG: %s`
+
 // SummarizeArticle produces a paraphrased summary + key points for an article.
 func (s *Summarizer) SummarizeArticle(ctx context.Context, title, body string) (*ArticleSummary, error) {
-	prompt := fmt.Sprintf(articlePrompt, title, clip(body, 8000))
+	prompt := fmt.Sprintf(articlePromptVI, title, clip(body, 8000))
 	raw, err := s.complete(ctx, prompt, 700)
 	if err != nil {
 		return nil, err
@@ -108,17 +127,18 @@ func (s *Summarizer) TranslateToVietnamese(ctx context.Context, body string) (st
 // single request is materially cheaper than translating and summarizing in two
 // separate calls.
 type TranslationSummary struct {
-	VietnameseBody string   `json:"vietnamese_body"`
-	Summary        *string  `json:"summary"`
-	KeyPoints      []string `json:"key_points"`
+	VietnameseTitle string   `json:"vietnamese_title"`
+	VietnameseBody  string   `json:"vietnamese_body"`
+	Summary         *string  `json:"summary"`
+	KeyPoints       []string `json:"key_points"`
 }
 
 // TranslateAndSummarize performs the two reader-facing transformations in one
 // model call and returns structured JSON for reliable storage.
 func (s *Summarizer) TranslateAndSummarize(ctx context.Context, title, body string) (*TranslationSummary, error) {
-	prompt := fmt.Sprintf(`Bạn là biên tập viên khoa học fitness. Hãy dịch toàn bộ nội dung tiếng Anh sang tiếng Việt tự nhiên, chính xác; giữ nguyên số liệu, đơn vị, tên riêng và mức độ chắc chắn của bằng chứng. Sau đó tóm tắt đúng nội dung, không thêm suy đoán.
+	prompt := fmt.Sprintf(`Bạn là biên tập viên báo thể thao Việt Nam. Hãy dịch tiêu đề và toàn bộ nội dung tiếng Anh sang tiếng Việt tự nhiên, chính xác; giữ nguyên tên vận động viên, câu lạc bộ, giải đấu, tỷ số, số liệu và thời gian. Sau đó tóm tắt đúng nội dung, không thêm suy đoán.
 Chỉ trả về JSON hợp lệ theo schema:
-{"vietnamese_body":"bản dịch đầy đủ","summary":"3-4 câu tóm tắt tiếng Việt","key_points":["3-5 ý chính"]}
+{"vietnamese_title":"tiêu đề tiếng Việt","vietnamese_body":"bản dịch đầy đủ","summary":"3-4 câu tóm tắt tiếng Việt","key_points":["3-5 ý chính"]}
 Nếu nội dung không đủ, vẫn dịch phần có sẵn và để summary là null. Không dùng markdown fence.
 
 TIÊU ĐỀ: %s
@@ -145,6 +165,9 @@ NỘI DUNG:
 	}
 	if strings.TrimSpace(out.VietnameseBody) == "" {
 		return nil, fmt.Errorf("translation returned empty body")
+	}
+	if strings.TrimSpace(out.VietnameseTitle) == "" {
+		out.VietnameseTitle = title
 	}
 	return unwrapTranslationSummary(&out), nil
 }
@@ -213,6 +236,14 @@ type anthropicResponse struct {
 func (s *Summarizer) complete(ctx context.Context, prompt string, maxTokens int) (string, error) {
 	if !s.Enabled() {
 		return "", fmt.Errorf("summarizer: LLM_API_KEY not configured")
+	}
+	if ok, err := s.BudgetOK(ctx); err != nil {
+		return "", err
+	} else if !ok {
+		return "", ErrBudgetExceeded
+	}
+	if err := s.llm.RecordAttempt(ctx, s.model); err != nil {
+		return "", err
 	}
 	if strings.Contains(s.baseURL, "generativelanguage.googleapis.com") {
 		return s.completeGemini(ctx, prompt, maxTokens)

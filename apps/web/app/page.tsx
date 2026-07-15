@@ -1,249 +1,262 @@
 import Link from "next/link";
 import { api, demoItems, demoTopics, type Item, type Topic } from "./lib";
-import { Footer, PageTitle } from "./ui";
+import { Footer } from "./ui";
 
-const hotNews = [
-  ["Nghiên cứu mới", "Volume tập luyện và ngưỡng tăng cơ", "12 phút trước"],
-  ["Dinh dưỡng", "Creatine có thật sự cần dùng mỗi ngày?", "28 phút trước"],
-  ["Sức mạnh", "Kỹ thuật squat cho người tập lâu năm", "1 giờ trước"],
-  ["Phục hồi", "Giấc ngủ ảnh hưởng đến hiệu suất thế nào?", "2 giờ trước"],
-];
-
-function FeedStory({
-  item,
-  image = "",
-  featured = false,
-}: {
-  item: Item;
-  image?: string;
-  featured?: boolean;
-}) {
-  if (featured)
-    return (
-      <article className="featured">
-        <div className="featured-meta">
-          ▣ {item.source_name || "BaoTheX"} · 1 giờ trước · 🔥 Nổi bật
-        </div>
-        <h2>{item.title}</h2>
-        <p>
-          {item.summary ||
-            item.excerpt ||
-            "Nội dung được tóm tắt từ nguồn đáng tin cậy và trình bày ngắn gọn."}
-        </p>
-        <div className="featured-footer">
-          <div className="source-stack">
-            <div className="source-dots">
-              <span className="avatar">B</span>
-              <span className="avatar">R</span>
-              <span className="avatar">N</span>
-            </div>
-            <span>3 nguồn đưa tin</span>
-          </div>
-          <Link className="arrow-btn" href={`/noi-dung/${item.id}`}>
-            Xem tin →
-          </Link>
-        </div>
-      </article>
-    );
-  return (
-    <article className="feed-card">
-      <div className="feed-type">
-        {item.type === "research"
-          ? "NGHIÊN CỨU"
-          : item.type === "video"
-            ? "VIDEO"
-            : item.type === "podcast"
-              ? "PODCAST"
-              : "BÀI VIẾT"}
-      </div>
-      <div className="feed-meta">
-        <span>◈</span>
-        <strong>{item.source_name || "BaoTheX"}</strong>
-        <span>·</span>
-        <span>3 giờ trước</span>
-      </div>
-      <Link className="feed-card-title" href={`/noi-dung/${item.id}`}>
-        <h2>{item.title}</h2>
-      </Link>
-      <p>{item.summary || item.excerpt || "Bài viết được BaoTheX chọn lọc và tóm tắt."}</p>
-      {image && (
-        <Link className={`feed-image ${image}`} href={`/noi-dung/${item.id}`}>
-          {item.type === "video" ? "▶" : "BX"}
-        </Link>
-      )}
-      <div className="feed-actions">
-        <span>♡ 1,2k</span>
-        <span>⇄ 184</span>
-        <span>◌ 96</span>
-        <Link href={`/noi-dung/${item.id}`}>↗ Mở bài →</Link>
-      </div>
-    </article>
-  );
-}
+type HomeData = { today?: Item[]; sports?: Item[]; videos?: Item[] };
 
 export default async function Home() {
-  const home = await api<{ items?: Item[]; topics?: Topic[] }>("/home", {});
-  const items = home.items?.length
-    ? home.items
-    : await api<Item[]>("/content?per_page=8&sort=recent", demoItems);
-  const topics = home.topics?.length ? home.topics : demoTopics;
-  const lead = items[0] || demoItems[0];
-  const latestItems = items.slice(5, 8).length ? items.slice(5, 8) : items.slice(1, 4);
+  const home = await api<HomeData>("/home", {});
+  const feed = await api<Item[]>("/content?per_page=30&sort=recent", demoItems);
+  const latest = Array.from(
+    new Map(
+      [...(home.today || []), ...(home.sports || []), ...feed].map((item) => [item.id, item]),
+    ).values(),
+  ).slice(0, 30);
+  const topics = await api<Topic[]>("/topics", demoTopics);
+  const sportsTopics = topics.filter((topic) =>
+    /bong|tennis|the-thao|motor|esport|khac/.test(topic.slug),
+  );
+  const lead = latest[0] || demoItems[0];
+  const secondary = latest.slice(1, 5);
+  const scored = latest.filter((item) => scorelineFrom(item)).slice(0, 6);
+  const dateLabel = new Intl.DateTimeFormat("vi-VN", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(new Date());
+
   return (
     <>
-      <main className="wrap dashboard">
-        <aside className="sidebar">
-          <div className="side-section">
-            <div className="side-link active">
-              🏠 <span>Trang chủ</span>
+      <main className="wrap sports-home">
+        <section className="newsroom-masthead">
+          <div className="issue-line">
+            <span>{dateLabel}</span>
+            <b>
+              <i /> Tin mới cập nhật liên tục
+            </b>
+            <span>Ấn bản số {new Date().getDate().toString().padStart(2, "0")}</span>
+          </div>
+          <div className="masthead-grid">
+            <div className="masthead-copy">
+              <span className="tag">BÁO THỂ THAO ĐA NGUỒN</span>
+              <h1>
+                Bản tin thể thao <em>24h</em>
+              </h1>
+              <p>
+                Tin đáng chú ý, kết quả mới và những câu chuyện thể thao được tuyển chọn từ các
+                nguồn uy tín.
+              </p>
             </div>
-            <Link className="side-link" href="/danh-muc">
-              ◷ <span>Mới nhất</span>
-            </Link>
-            <Link className="side-link" href="/nghien-cuu">
-              🎁 <span>Nghiên cứu nổi bật</span>
-            </Link>
-          </div>
-          <div className="side-section">
-            <div className="side-title">Lọc nguồn</div>
-            <Link className="side-link" href="/nguon">
-              ◉ <span>Tất cả nguồn</span>
-              <span className="count">24</span>
-            </Link>
-            <Link className="side-link" href="/danh-muc">
-              ▤ <span>Bài viết</span>
-            </Link>
-            <Link className="side-link" href="/video">
-              ▶ <span>Video</span>
-            </Link>
-            <Link className="side-link" href="/podcast">
-              ◈ <span>Podcast</span>
-            </Link>
-          </div>
-          <div className="side-section">
-            <div className="side-title">Theo dõi</div>
-            <div className="follow-list">
-              {[
-                "Stronger by Science",
-                "Journal of Strength",
-                "Barbell Medicine",
-                "Europe PMC",
-                "Iron Culture",
-              ].map((source) => (
-                <div className="follow-item" key={source}>
-                  <span className="avatar">{source[0]}</span>
-                  {source}
-                </div>
-              ))}
-            </div>
-          </div>
-        </aside>
-        <section className="main-feed">
-          <div className="feed-heading">
-            <h1>Dòng tin</h1>
-            <div className="feed-tabs">
-              <span className="active">Dành cho bạn</span>
-              <span>Mới nhất</span>
-            </div>
-          </div>
-          <FeedStory item={lead} featured />
-          {items.slice(1, 5).map((item, index) => (
-            <FeedStory
-              key={item.id}
-              item={item}
-              image={index === 0 ? "blue" : index === 1 ? "orange" : ""}
-            />
-          ))}
-          <section className="newsroom-detail">
-            <div className="section-head detail-head">
+            <div className="masthead-stats">
               <div>
-                <span className="tag">Cập nhật liên tục</span>
-                <h2>Mới trong ngày</h2>
+                <strong>{latest.length.toString().padStart(2, "0")}</strong>
+                <span>Tin mới</span>
               </div>
-              <Link className="read-link" href="/danh-muc">
-                Xem dòng tin →
+              <div>
+                <strong>
+                  {new Set(latest.map((x) => x.source_name).filter(Boolean)).size
+                    .toString()
+                    .padStart(2, "0")}
+                </strong>
+                <span>Nguồn tin</span>
+              </div>
+              <div>
+                <strong>{scored.length.toString().padStart(2, "0")}</strong>
+                <span>Kết quả</span>
+              </div>
+            </div>
+          </div>
+          <nav className="category-strip">
+            <Link href="/danh-muc">Mới nhất</Link>
+            {sportsTopics.slice(0, 7).map((topic) => (
+              <Link href={`/chu-de/${topic.slug}`} key={topic.id}>
+                {topic.name}
               </Link>
+            ))}
+          </nav>
+        </section>
+
+        <div className="sports-grid">
+          <section className="sports-main">
+            <div className="section-heading">
+              <div>
+                <span className="tag">01 · TIN NÓNG</span>
+                <h2>Đáng chú ý trong ngày</h2>
+              </div>
+              <Link href="/danh-muc">Xem tất cả →</Link>
             </div>
-            <div className="latest-list">
-              {latestItems.map((item, index) => (
-                <Link className="latest-row" href={`/noi-dung/${item.id}`} key={item.id}>
-                  <span className="latest-number">0{index + 1}</span>
-                  <span className="latest-copy">
-                    <strong>{item.title}</strong>
-                    <small>
-                      {item.source_name || "BaoTheX"} · {index + 1} giờ trước · 6 phút đọc
-                    </small>
-                  </span>
-                  <span className="latest-arrow">↗</span>
-                </Link>
+            <Link className="sports-lead" href={`/noi-dung/${lead.id}`}>
+              {lead.image_url ? (
+                <img src={lead.image_url} alt="" />
+              ) : (
+                <div className="lead-placeholder">BX</div>
+              )}
+              <div className="lead-copy">
+                <span className="tag">
+                  {lead.source_name || "BaoTheX"}
+                  {scorelineFrom(lead) ? ` · TỶ SỐ ${scorelineFrom(lead)}` : ""}
+                </span>
+                <h3>{lead.title}</h3>
+                <p>{lead.summary || lead.excerpt || "Tin thể thao đang được biên tập."}</p>
+                <b>Đọc bài →</b>
+              </div>
+            </Link>
+            <div className="secondary-leads">
+              {secondary.map((item) => (
+                <NewsTile item={item} key={item.id} />
               ))}
             </div>
-            <div className="editor-note">
-              <span className="editor-note-mark">BX</span>
-              <div>
-                <strong>Biên tập có chọn lọc</strong>
-                <p>
-                  Mỗi nội dung đều được gắn nguồn, phân loại và tóm tắt để bạn nắm ý chính trước khi
-                  đọc sâu.
-                </p>
-              </div>
+            <div className="sports-list">
+              {latest.slice(5, 18).map((item) => (
+                <NewsRow item={item} key={item.id} />
+              ))}
             </div>
           </section>
-          <div className="section">
-            <div className="section-head">
-              <div>
-                <span className="tag">Khám phá</span>
-                <h2>Chủ đề đang được quan tâm</h2>
-              </div>
-              <Link className="read-link" href="/chu-de">
-                Xem tất cả →
-              </Link>
-            </div>
-            <div className="topic-links">
-              {topics.slice(0, 8).map((topic) => (
+          <aside className="sports-rail">
+            <div className="rail-card">
+              <h3>Chủ đề thể thao</h3>
+              {sportsTopics.slice(0, 10).map((topic) => (
                 <Link href={`/chu-de/${topic.slug}`} key={topic.id}>
                   {topic.name}
                   <span>→</span>
                 </Link>
               ))}
             </div>
-          </div>
-        </section>
-        <aside className="rightbar">
-          <div className="right-card">
-            <div className="right-head">
-              <span>🔥 Tin nóng</span>
-              <span className="live">● LIVE</span>
+            <div className="rail-card">
+              <h3>Video mới</h3>
+              {(home.videos || []).slice(0, 6).map((item) => (
+                <NewsRow item={item} compact key={item.id} />
+              ))}
+              {!(home.videos || []).length ? (
+                <p className="rail-note">
+                  Video từ các kênh thể thao sẽ xuất hiện sau khi kết nối YouTube API.
+                </p>
+              ) : null}
             </div>
-            {hotNews.map(([category, title, time]) => (
-              <div className="hot-item" key={title}>
-                <span className="hot-icon">✦</span>
-                <div>
-                  {title}
-                  <small>
-                    {category} · {time}
-                  </small>
-                </div>
+            <div className="rail-card">
+              <h3>Nguyên tắc biên tập</h3>
+              <p className="rail-note">
+                Tin Việt Nam giữ nguyên ngôn ngữ. Tin quốc tế chỉ xuất bản sau khi bản dịch tiếng
+                Việt đã được lưu.
+              </p>
+            </div>
+          </aside>
+        </div>
+
+        {scored.length ? (
+          <section className="sports-results">
+            <div className="section-heading">
+              <div>
+                <span className="tag">02 · KẾT QUẢ</span>
+                <h2>Tỷ số đáng chú ý</h2>
               </div>
+            </div>
+            <div className="score-grid">
+              {scored.map((item) => (
+                <Link className="score-tile" href={`/noi-dung/${item.id}`} key={item.id}>
+                  <span>{item.source_name || "Thể thao"}</span>
+                  <strong>{scorelineFrom(item)}</strong>
+                  <b>{item.title}</b>
+                </Link>
+              ))}
+            </div>
+          </section>
+        ) : null}
+        <section className="sports-section">
+          <div className="section-heading">
+            <div>
+              <span className="tag">03 · TOÀN CẢNH</span>
+              <h2>Nhiều góc nhìn thể thao</h2>
+            </div>
+            <Link href="/danh-muc">Khám phá chuyên mục →</Link>
+          </div>
+          <div className="news-mosaic">
+            {latest.slice(8, 26).map((item) => (
+              <MosaicCard item={item} key={item.id} />
             ))}
           </div>
-          <div className="right-card">
-            <div className="right-head">
-              <span>📝 Tin hôm nay</span>
+        </section>
+        <section className="sports-section">
+          <div className="section-heading">
+            <div>
+              <span className="tag">04 · THEO DÕI</span>
+              <h2>Các mảng thể thao</h2>
             </div>
-            {items.slice(1, 5).map((item) => (
-              <Link className="hot-item" href={`/noi-dung/${item.id}`} key={item.id}>
-                <span className="hot-icon">▣</span>
-                <div>
-                  {item.title}
-                  <small>{item.source_name || "BaoTheX"} · mới cập nhật</small>
-                </div>
+          </div>
+          <div className="sport-pills">
+            {sportsTopics.slice(0, 8).map((topic) => (
+              <Link href={`/chu-de/${topic.slug}`} key={topic.id}>
+                {topic.name}
+                <span>→</span>
               </Link>
             ))}
           </div>
-        </aside>
+        </section>
       </main>
       <Footer />
     </>
   );
+}
+
+function NewsTile({ item }: { item: Item }) {
+  return (
+    <Link className="news-tile" href={`/noi-dung/${item.id}`}>
+      {item.image_url ? (
+        <img src={item.image_url} alt="" />
+      ) : (
+        <div className="tile-placeholder">BX</div>
+      )}
+      <div className="news-tile-copy">
+        <span>{item.source_name || "BaoTheX"}</span>
+        <strong>{item.title}</strong>
+        <small>{item.summary || item.excerpt || "Đọc nội dung đầy đủ."}</small>
+      </div>
+    </Link>
+  );
+}
+function MosaicCard({ item }: { item: Item }) {
+  return (
+    <Link className="news-mosaic-card" href={`/noi-dung/${item.id}`}>
+      {item.image_url ? (
+        <img src={item.image_url} alt="" />
+      ) : (
+        <div className="mosaic-placeholder">BX</div>
+      )}
+      <div>
+        <span>
+          {item.source_name || "BaoTheX"} · {item.type === "video" ? "VIDEO" : "TIN MỚI"}
+        </span>
+        <h3>{item.title}</h3>
+        <p>{item.summary || item.excerpt || "Xem nội dung đầy đủ."}</p>
+      </div>
+    </Link>
+  );
+}
+function NewsRow({ item, compact = false }: { item: Item; compact?: boolean }) {
+  const score = scorelineFrom(item);
+  return (
+    <Link className={`sports-row ${compact ? "compact" : ""}`} href={`/noi-dung/${item.id}`}>
+      {item.image_url ? (
+        <img src={item.image_url} alt="" />
+      ) : (
+        <div className="row-placeholder">{item.type === "video" ? "▶" : "BX"}</div>
+      )}
+      <div>
+        <span>
+          {item.source_name || "BaoTheX"} · {item.type === "video" ? "VIDEO" : "TIN THỂ THAO"}
+          {score ? ` · TỶ SỐ ${score}` : ""}
+        </span>
+        <strong>{item.title}</strong>
+        {!compact && (
+          <small>{item.summary || item.excerpt || "Đọc bản tin đầy đủ tại BaoTheX."}</small>
+        )}
+      </div>
+    </Link>
+  );
+}
+function scorelineFrom(item: Item) {
+  const text = [item.title, item.summary, item.excerpt].filter(Boolean).join(" ");
+  const match = text.match(/\b(\d{1,2})\s*[-–:]\s*(\d{1,2})\b/);
+  return match ? `${match[1]}-${match[2]}` : "";
 }

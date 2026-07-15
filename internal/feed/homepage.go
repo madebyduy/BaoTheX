@@ -10,11 +10,11 @@ import (
 
 // Homepage is the block-structured homepage payload (spec section 14).
 type Homepage struct {
-	Today       []domain.ContentItem `json:"today"`        // Nổi bật hôm nay (3-5)
-	ForYou      []domain.ContentItem `json:"for_you"`      // personalized
+	Today       []domain.ContentItem `json:"today"`   // Nổi bật hôm nay (3-5)
+	ForYou      []domain.ContentItem `json:"for_you"` // personalized
 	NewResearch []domain.ContentItem `json:"new_research"`
 	Videos      []domain.ContentItem `json:"videos"`
-	Strength    []domain.ContentItem `json:"strength"`
+	Sports      []domain.ContentItem `json:"sports"`
 	DeepReads   []domain.ContentItem `json:"deep_reads"`
 	Discovery   []domain.ContentItem `json:"discovery"`
 }
@@ -53,7 +53,7 @@ func (b *Builder) Build(ctx context.Context, userID int64) (*Homepage, error) {
 	if err != nil {
 		return nil, err
 	}
-	strength, err := b.db.Content.ByTopicSlugs(ctx, []string{"powerlifting", "bodybuilding", "strength"}, 4)
+	sports, err := b.db.Content.ByTopicSlugs(ctx, []string{"bong-da-viet-nam", "bong-da-quoc-te", "bong-ro", "tennis", "the-thao-viet-nam"}, 8)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (b *Builder) Build(ctx context.Context, userID int64) (*Homepage, error) {
 		ForYou:      nonNil(personal),
 		NewResearch: nonNil(newResearch),
 		Videos:      nonNil(videos),
-		Strength:    nonNil(strength),
+		Sports:      nonNil(sports),
 		DeepReads:   nonNil(deepReads),
 		Discovery:   nonNil(discovery),
 	}, nil

@@ -1,12 +1,15 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/mmcdole/gofeed"
+	"golang.org/x/net/html"
 
 	"repwire/internal/domain"
 )
@@ -81,9 +84,17 @@ func (f *RSSFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchResul
 		res.LastModified = &lm
 	}
 
+	enriched := 0
 	for _, it := range feed.Items {
 		if it.Link == "" || it.Title == "" {
 			continue
+		}
+		body := bodyFrom(it)
+		if len([]rune(body)) < 600 && enriched < 8 {
+			if full := f.fetchArticleBody(ctx, it.Link); len([]rune(full)) > len([]rune(body)) {
+				body = full
+			}
+			enriched++
 		}
 		raw := RawItem{
 			Type:      contentTypeForSource(src),
@@ -92,7 +103,7 @@ func (f *RSSFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchResul
 			Published: it.PublishedParsed,
 			Language:  src.DefaultLang,
 		}
-		if body := bodyFrom(it); body != "" {
+		if body != "" {
 			raw.Body = ptr(body)
 		}
 		if excerpt := excerptFrom(it); excerpt != "" {
@@ -108,6 +119,64 @@ func (f *RSSFetcher) Fetch(ctx context.Context, src *domain.Source) (*FetchResul
 		res.Items = append(res.Items, raw)
 	}
 	return res, nil
+}
+
+// fetchArticleBody is a bounded best-effort fallback for feeds that expose only
+// an excerpt. It reads semantic article/main content, never scripts/styles,
+// and is capped to a small number of items per feed refresh.
+func (f *RSSFetcher) fetchArticleBody(ctx context.Context, articleURL string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, articleURL, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return ""
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return ""
+	}
+	doc, err := html.Parse(bytes.NewReader(data))
+	if err != nil {
+		return ""
+	}
+	var candidates []*html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && (n.Data == "article" || n.Data == "main") {
+			candidates = append(candidates, n)
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
+	for _, candidate := range candidates {
+		if text := cleanReadableText(nodeText(candidate)); len([]rune(text)) > 600 {
+			return text
+		}
+	}
+	return ""
+}
+
+func nodeText(n *html.Node) string {
+	if n.Type == html.TextNode {
+		return n.Data + " "
+	}
+	if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style" || n.Data == "noscript" || n.Data == "nav" || n.Data == "footer") {
+		return ""
+	}
+	var b strings.Builder
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		b.WriteString(nodeText(child))
+	}
+	return b.String()
 }
 
 // contentTypeForSource maps a source kind to the default content type.

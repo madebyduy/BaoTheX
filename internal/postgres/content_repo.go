@@ -15,7 +15,7 @@ import (
 type ContentRepo struct{ db *DB }
 
 // contentCols is the base column set (optionally joined with source name as source_name).
-const contentCols = `c.id, c.source_id, c.type, c.status, c.title, c.canonical_url, c.url_hash,
+const contentCols = `c.id, c.source_id, c.type, c.status, COALESCE(c.translated_title, c.title), c.canonical_url, c.url_hash,
 	c.title_hash, c.image_url, c.excerpt, c.summary, c.key_points, c.language, c.published_at,
 	c.discovered_at, c.base_score, c.editorial_boost, c.final_score, c.view_count, c.save_count, c.updated_at`
 
@@ -222,10 +222,14 @@ func (r *ContentRepo) GetBody(ctx context.Context, contentID int64) (*domain.Con
 	return &b, err
 }
 
-// SetVietnameseBody saves a completed translation.
-func (r *ContentRepo) SetVietnameseBody(ctx context.Context, contentID int64, body string) error {
-	_, err := r.db.Pool.Exec(ctx, `UPDATE content_bodies SET vietnamese_body=$2,
-		translation_status='ready', translated_at=now(), updated_at=now() WHERE content_id=$1`, contentID, body)
+// SetVietnameseContent saves the translated title and body atomically enough
+// for public read paths: the item only becomes ready after this returns.
+func (r *ContentRepo) SetVietnameseContent(ctx context.Context, contentID int64, title, body string) error {
+	_, err := r.db.Pool.Exec(ctx, `WITH saved_body AS (
+		UPDATE content_bodies SET vietnamese_body=$3, translation_status='ready',
+			translated_at=now(), updated_at=now() WHERE content_id=$1 RETURNING content_id)
+		UPDATE content_items SET translated_title=$2
+		WHERE id=$1 AND EXISTS (SELECT 1 FROM saved_body)`, contentID, title, body)
 	return err
 }
 
@@ -430,7 +434,7 @@ func (r *ContentRepo) Related(ctx context.Context, id int64, limit int) ([]domai
 func (r *ContentRepo) TopGeneral(ctx context.Context, limit int) ([]domain.ContentItem, error) {
 	rows, err := r.db.Pool.Query(ctx, `
 		SELECT `+contentCols+`, s.name FROM content_items c JOIN sources s ON s.id=c.source_id
-		WHERE c.status='ready' AND c.published_at > now() - interval '30 days'
+		WHERE c.status='ready' AND c.published_at > now() - interval '48 hours'
 		ORDER BY c.final_score DESC, c.published_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -645,6 +649,32 @@ func (r *ContentRepo) IncrementView(ctx context.Context, id int64) error {
 func (r *ContentRepo) IDsToRescore(ctx context.Context, limit int) ([]int64, error) {
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT id FROM content_items WHERE status IN ('processing','ready') ORDER BY updated_at ASC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// IDsPendingTranslation returns foreign stories that are intentionally hidden
+// from public feeds until their Vietnamese edition is stored.
+func (r *ContentRepo) IDsPendingTranslation(ctx context.Context, limit int) ([]int64, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT c.id FROM content_items c
+		JOIN content_bodies b ON b.content_id=c.id
+		WHERE c.language <> 'vi' AND c.status='processing'
+		  AND b.translation_status <> 'ready'
+		  AND length(trim(b.original_body)) > 0
+		ORDER BY c.final_score DESC, c.published_at DESC NULLS LAST
+		LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}

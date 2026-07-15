@@ -1,41 +1,38 @@
 import Link from "next/link";
-import { api, demoItems, type Item, type ContentBody, typeLabel } from "../../lib";
+import { api, demoItems, type ContentBody, type Item, typeLabel } from "../../lib";
 import { Footer } from "../../ui";
 import { SaveButton, TranslateButton } from "../../action-buttons";
 
-type ResearchDetail = {
-  abstract?: string;
-  journal?: string;
-  authors?: string[];
-  study_type?: string;
-  full_text_url?: string;
-  breakdown?: {
-    question?: string;
-    participants?: string;
-    intervention?: string;
-    findings?: string[];
-    not_proven?: string;
-    limitations?: string[];
-    practical?: string;
+type Detail = {
+  item?: Item;
+  body?: ContentBody;
+  article?: { author?: string; word_count?: number };
+  research?: {
+    abstract?: string;
+    journal?: string;
+    breakdown?: {
+      question?: string;
+      participants?: string;
+      intervention?: string;
+      findings?: string[];
+      not_proven?: string;
+      limitations?: string[];
+    };
   };
 };
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const data = await api<{
-    item?: Item;
-    body?: ContentBody;
-    research?: ResearchDetail;
-    article?: { author?: string; word_count?: number };
-  }>(`/content/${id}`, {});
+  const data = await api<Detail>(`/content/${id}`, {});
   const item = data.item || demoItems.find((x) => x.id === Number(id)) || demoItems[0];
   const body = data.body;
-  const research = data.research;
   const translated = body?.vietnamese_body?.trim();
-  const sourceText = translated || body?.original_body || research?.abstract || item.excerpt || "";
-  const related = await api<Item[]>(`/content/${id}/related`, []);
+  const sourceText =
+    translated || body?.original_body || data.research?.abstract || item.excerpt || "";
   const isEnglish = Boolean(body?.original_body && !translated && body.original_language !== "vi");
-
+  const score = scorelineFrom([item.title, item.summary, item.excerpt, sourceText].join(" "));
+  const related = await api<Item[]>(`/content/${id}/related`, []);
+  const newsroom = await api<Item[]>("/content?per_page=8&sort=top", []);
   return (
     <>
       <main className="wrap article-page">
@@ -43,6 +40,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           <span className="tag">{typeLabel(item.type)}</span>
           <span>{item.source_name || "BaoTheX"}</span>
           <span>{formatDate(item.published_at)}</span>
+          {score ? <strong className="score-badge">TỶ SỐ {score}</strong> : null}
         </div>
         <h1 className="article-title">{item.title}</h1>
         <p className="article-lede">
@@ -53,7 +51,6 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
             <img src={item.image_url} alt="" />
           </div>
         ) : null}
-
         <div className="article-layout">
           <aside className="article-aside">
             <span className="eyebrow">THÔNG TIN BÀI</span>
@@ -61,16 +58,22 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               <b>Nguồn</b>
               <span>{item.source_name || "BaoTheX"}</span>
             </div>
-            {research?.journal ? (
+            {data.article?.author ? (
               <div className="article-aside-line">
-                <b>Tạp chí</b>
-                <span>{research.journal}</span>
+                <b>Tác giả</b>
+                <span>{data.article.author}</span>
               </div>
             ) : null}
-            {research?.study_type ? (
+            {data.article?.word_count ? (
               <div className="article-aside-line">
-                <b>Loại nghiên cứu</b>
-                <span>{research.study_type}</span>
+                <b>Độ dài</b>
+                <span>{data.article.word_count} từ</span>
+              </div>
+            ) : null}
+            {data.research?.journal ? (
+              <div className="article-aside-line">
+                <b>Tạp chí</b>
+                <span>{data.research.journal}</span>
               </div>
             ) : null}
             {item.canonical_url ? (
@@ -87,13 +90,13 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               <SaveButton contentId={item.id} />
             </div>
           </aside>
-
           <div className="article-body">
             {isEnglish ? (
               <div className="translation-banner">
                 <b>Bài gốc đang ở tiếng Anh</b>
                 <span>
-                  Bấm dịch để đọc bản tiếng Việt. BaoTheX chỉ hiển thị bản dịch sau khi xử lý xong.
+                  BaoTheX chỉ dịch nguồn quốc tế; nguồn tiếng Việt được giữ nguyên để tiết kiệm
+                  quota.
                 </span>
                 <TranslateButton contentId={item.id} />
               </div>
@@ -102,28 +105,46 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               <div className="translation-badge">BẢN TIẾNG VIỆT ĐÃ ĐƯỢC BIÊN TẬP</div>
             ) : null}
             <section className="article-content">
-              <div className="article-section article-main-copy">
+              {item.summary ? (
+                <div className="article-summary">
+                  <span>TÓM TẮT NHANH</span>
+                  <p>{item.summary}</p>
+                </div>
+              ) : null}
+              <section className="article-section article-main-copy">
                 <h2>{translated ? "Nội dung bài viết" : "Nội dung nguồn"}</h2>
                 <ReadableText text={sourceText} />
-              </div>
+                {!body?.original_body && !data.research?.abstract ? (
+                  <div className="notice">
+                    Nguồn RSS hiện chỉ cung cấp phần tóm tắt. Mở bài gốc để đọc toàn văn; hệ thống
+                    sẽ hiển thị toàn văn ngay khi nguồn cho phép cung cấp nội dung đầy đủ.
+                  </div>
+                ) : null}
+              </section>
               {item.key_points?.length ? (
                 <ArticleList title="Điểm chính" items={item.key_points} />
               ) : null}
-              {research?.breakdown ? (
+              {data.research?.breakdown ? (
                 <>
-                  <ArticleSection title="Câu hỏi nghiên cứu" text={research.breakdown.question} />
+                  <ArticleSection
+                    title="Câu hỏi nghiên cứu"
+                    text={data.research.breakdown.question}
+                  />
                   <ArticleSection
                     title="Đối tượng và phương pháp"
-                    text={[research.breakdown.participants, research.breakdown.intervention]
+                    text={[
+                      data.research.breakdown.participants,
+                      data.research.breakdown.intervention,
+                    ]
                       .filter(Boolean)
                       .join("\n\n")}
                   />
-                  <ArticleList title="Phát hiện chính" items={research.breakdown.findings} />
+                  <ArticleList title="Phát hiện chính" items={data.research.breakdown.findings} />
                   <ArticleSection
                     title="Giới hạn cần biết"
                     text={
-                      research.breakdown.not_proven ||
-                      (research.breakdown.limitations || []).join("\n\n")
+                      data.research.breakdown.not_proven ||
+                      (data.research.breakdown.limitations || []).join("\n\n")
                     }
                   />
                 </>
@@ -141,6 +162,27 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               </section>
             ) : null}
           </div>
+          <aside className="article-rail">
+            <div className="article-rail-card">
+              <span className="tag">TIN NÓNG</span>
+              <h3>Đang được quan tâm</h3>
+              {newsroom.slice(0, 5).map((x) => (
+                <Link href={`/noi-dung/${x.id}`} key={x.id}>
+                  <small>{x.source_name || "BaoTheX"}</small>
+                  <strong>{x.title}</strong>
+                </Link>
+              ))}
+            </div>
+            <div className="article-rail-card">
+              <span className="tag">ĐỌC TIẾP</span>
+              <h3>Cùng chủ đề</h3>
+              {related.slice(0, 4).map((x) => (
+                <Link href={`/noi-dung/${x.id}`} key={x.id}>
+                  <strong>{x.title}</strong>
+                </Link>
+              ))}
+            </div>
+          </aside>
         </div>
       </main>
       <Footer />
@@ -180,6 +222,10 @@ function ArticleList({ title, items }: { title: string; items?: string[] }) {
       </ul>
     </section>
   ) : null;
+}
+function scorelineFrom(text: string) {
+  const match = text.match(/\b(\d{1,2})\s*[-–:]\s*(\d{1,2})\b/);
+  return match ? `${match[1]}-${match[2]}` : "";
 }
 function formatDate(value?: string) {
   if (!value) return "";
