@@ -48,24 +48,6 @@ export default async function Home() {
                 nguồn uy tín.
               </p>
             </div>
-            <div className="masthead-stats">
-              <div>
-                <strong>{latest.length.toString().padStart(2, "0")}</strong>
-                <span>Tin mới</span>
-              </div>
-              <div>
-                <strong>
-                  {new Set(latest.map((x) => x.source_name).filter(Boolean)).size
-                    .toString()
-                    .padStart(2, "0")}
-                </strong>
-                <span>Nguồn tin</span>
-              </div>
-              <div>
-                <strong>{scored.length.toString().padStart(2, "0")}</strong>
-                <span>Kết quả</span>
-              </div>
-            </div>
           </div>
           <nav className="category-strip">
             <Link href="/danh-muc">Mới nhất</Link>
@@ -123,24 +105,6 @@ export default async function Home() {
                   <span>→</span>
                 </Link>
               ))}
-            </div>
-            <div className="rail-card">
-              <h3>Video mới</h3>
-              {(home.videos || []).slice(0, 6).map((item) => (
-                <NewsRow item={item} compact key={item.id} />
-              ))}
-              {!(home.videos || []).length ? (
-                <p className="rail-note">
-                  Video từ các kênh thể thao sẽ xuất hiện sau khi kết nối YouTube API.
-                </p>
-              ) : null}
-            </div>
-            <div className="rail-card">
-              <h3>Nguyên tắc biên tập</h3>
-              <p className="rail-note">
-                Tin Việt Nam giữ nguyên ngôn ngữ. Tin quốc tế chỉ xuất bản sau khi bản dịch tiếng
-                Việt đã được lưu.
-              </p>
             </div>
           </aside>
         </div>
