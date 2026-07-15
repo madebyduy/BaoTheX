@@ -2004,6 +2004,40 @@ p {
     height: 82px;
   }
 }
+
+/* Article content is untrusted publisher text: never let a URL or tracking id
+   resize the newsroom grid or push the right rail outside the viewport. */
+.article-page,
+.article-layout,
+.article-body,
+.article-content,
+.article-main-copy,
+.article-prose,
+.article-prose p,
+.article-summary,
+.article-summary p,
+.article-title,
+.article-lede {
+  min-width: 0;
+  max-width: 100%;
+}
+.article-page {
+  overflow-x: clip;
+}
+.article-title,
+.article-lede,
+.article-prose p,
+.article-section li,
+.article-summary p,
+.notice,
+.related-item strong,
+.article-rail-card strong {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.article-prose p {
+  white-space: pre-wrap;
+}
 .score-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

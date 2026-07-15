@@ -45,3 +45,30 @@ Một bài liên quan không được lẫn vào nội dung.`
 		t.Fatalf("real article text was removed: %q", got)
 	}
 }
+
+func TestCleanReadableTextStopsBeforePublisherHotlineAndErrorForm(t *testing.T) {
+	input := `Báo lỗi cho Soha
+Thông báo bán vé cho trận đấu của đội tuyển Việt Nam. Đây là nội dung chính cần được giữ lại cho độc giả.
+
+Tags
+Việt Nam
+bán vé
+Copy link
+https://example.com/article?tracking=` + strings.Repeat("x", 180) + `
+Đường dây nóng:
+0943 113 999
+Báo lỗi cho Soha
+*Vui lòng nhập đủ thông tin email hoặc số điện thoại
+Gửi báo lỗi
+Đóng`
+
+	got := cleanReadableText(input)
+	if !strings.Contains(got, "nội dung chính cần được giữ lại") {
+		t.Fatalf("real article text was removed: %q", got)
+	}
+	for _, unwanted := range []string{"Báo lỗi cho Soha", "Copy link", "tracking=", "Đường dây nóng", "Gửi báo lỗi", "Đóng"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("publisher boilerplate remained in article: %q", got)
+		}
+	}
+}

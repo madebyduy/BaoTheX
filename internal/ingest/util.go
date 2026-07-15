@@ -22,6 +22,8 @@ var junkMarkers = []string{".custom-article-container", "--color-foreground", "v
 var trailingReadMoreRE = regexp.MustCompile(`(?i)(?:\n\s*)+(?:continue reading|read more|tiếp tục đọc|đọc tiếp)\s*(?:\.{3}|…)?\s*$`)
 var consentBlockRE = regexp.MustCompile(`(?is)(?:để hiển thị nội dung này từ youtube|to display this content from youtube).*?(?:thử lại|try again)`)
 var readerJunkRE = regexp.MustCompile(`(?i)^(?:chấp nhận|accept|quản lý lựa chọn của tôi|manage my choices|chia sẻ|share|đọc ít lại|read less|thử lại|try again|\d{1,2}:\d{2})$`)
+var readerFooterRE = regexp.MustCompile(`(?i)^(?:tags?|copy link|link bài gốc|lấy link|đường dây nóng\s*:|hotline\s*:|gửi báo lỗi|report (?:an )?error)$`)
+var readerPublisherJunkRE = regexp.MustCompile(`(?i)^(?:báo lỗi cho\b.*|\*?vui lòng nhập đủ thông tin.*|đóng|vff\s*\||soha|\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2})$`)
 
 func stripHTML(s string) string {
 	s = blockTagRE.ReplaceAllString(s, "\n")
@@ -49,6 +51,9 @@ func cleanReadableText(s string) string {
 	for _, line := range lines {
 		line = strings.Join(strings.Fields(line), " ")
 		lowerLine := strings.ToLower(line)
+		if readerFooterRE.MatchString(line) {
+			break
+		}
 		if skipNext && line != "" {
 			skipNext = false
 			continue
@@ -60,7 +65,7 @@ func cleanReadableText(s string) string {
 			skipNext = true
 			continue
 		}
-		if line != "" && !readerJunkRE.MatchString(line) &&
+		if line != "" && !readerJunkRE.MatchString(line) && !readerPublisherJunkRE.MatchString(line) &&
 			!strings.HasPrefix(lowerLine, "ảnh bìa:") &&
 			!strings.HasPrefix(lowerLine, "phát sóng ngày:") {
 			clean = append(clean, line)

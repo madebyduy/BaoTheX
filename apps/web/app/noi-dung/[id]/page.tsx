@@ -284,6 +284,15 @@ function sanitizeArticleText(text: string) {
   const paragraphs: string[] = [];
   let skipNext = false;
   for (const line of lines) {
+    // Everything after these controls belongs to the publisher UI, not the article.
+    // Stop before tracking URLs, hotline forms and error-report dialogs can leak in.
+    if (
+      /^(?:tags?|copy link|link bài gốc|lấy link|đường dây nóng\s*:|hotline\s*:|gửi báo lỗi|report (?:an )?error)$/i.test(
+        line,
+      )
+    ) {
+      break;
+    }
     if (skipNext) {
       skipNext = false;
       continue;
@@ -297,7 +306,11 @@ function sanitizeArticleText(text: string) {
       /^(?:chấp nhận|accept|quản lý lựa chọn của tôi|manage my choices|chia sẻ|share|đọc ít lại|read less|thử lại|try again|thể thao|\d{1,2}:\d{2})$/i.test(
         line,
       ) ||
-      /^(?:ảnh bìa:|phát sóng ngày:)/i.test(line)
+      /^(?:ảnh bìa:|phát sóng ngày:|báo lỗi cho\b|\*?vui lòng nhập đủ thông tin|đóng$)/i.test(
+        line,
+      ) ||
+      /^(?:vff\s*\||soha)$/i.test(line) ||
+      /^\d{1,2}\/\d{1,2}\/\d{4}\s+\d{1,2}:\d{2}$/i.test(line)
     ) {
       continue;
     }
