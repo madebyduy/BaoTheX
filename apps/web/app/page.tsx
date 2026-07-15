@@ -18,7 +18,14 @@ export default async function Home() {
   );
   const lead = latest[0] || demoItems[0];
   const secondary = latest.slice(1, 5);
-  const scored = latest.filter((item) => scorelineFrom(item)).slice(0, 6);
+  const scored = Array.from(
+    new Map(
+      latest
+        .map((item) => ({ item, fixture: fixtureFrom(item) }))
+        .filter((entry): entry is { item: Item; fixture: Fixture } => Boolean(entry.fixture))
+        .map((entry) => [entry.fixture.key, entry]),
+    ).values(),
+  ).slice(0, 6);
   const dateLabel = new Intl.DateTimeFormat("vi-VN", {
     weekday: "long",
     day: "2-digit",
@@ -118,11 +125,26 @@ export default async function Home() {
               </div>
             </div>
             <div className="score-grid">
-              {scored.map((item) => (
-                <Link className="score-tile" href={`/noi-dung/${item.id}`} key={item.id}>
-                  <span>{item.source_name || "Thể thao"}</span>
-                  <strong>{scorelineFrom(item)}</strong>
-                  <b>{item.title}</b>
+              {scored.map(({ item, fixture }) => (
+                <Link className="score-tile" href={`/noi-dung/${item.id}`} key={fixture.key}>
+                  <div className="score-head">
+                    <span>Kết thúc</span>
+                    <small>{item.source_name || "BaoTheX"}</small>
+                  </div>
+                  <div className="score-team">
+                    <TeamMark team={fixture.home} />
+                    <b>{fixture.home.name}</b>
+                    <strong>{fixture.homeScore}</strong>
+                  </div>
+                  <div className="score-team">
+                    <TeamMark team={fixture.away} />
+                    <b>{fixture.away.name}</b>
+                    <strong>{fixture.awayScore}</strong>
+                  </div>
+                  <div className="score-foot">
+                    <span>{shortDate(item.published_at)}</span>
+                    <b>Xem diễn biến →</b>
+                  </div>
                 </Link>
               ))}
             </div>
@@ -246,4 +268,96 @@ function scorelineFrom(item: Item) {
   const text = [item.title, item.summary, item.excerpt].filter(Boolean).join(" ");
   const match = text.match(/\b(\d{1,2})\s*[-–:]\s*(\d{1,2})\b/);
   return match ? `${match[1]}-${match[2]}` : "";
+}
+
+type Team = { name: string; aliases: string[]; mark: string; code?: string; kind?: "club" };
+type Fixture = {
+  key: string;
+  home: Team;
+  away: Team;
+  homeScore: string;
+  awayScore: string;
+};
+
+const teams: Team[] = [
+  { name: "Tây Ban Nha", aliases: ["tây ban nha", "spain"], mark: "ES", code: "es" },
+  { name: "Việt Nam", aliases: ["việt nam", "vietnam"], mark: "VN", code: "vn" },
+  { name: "Hàn Quốc", aliases: ["hàn quốc", "south korea", "korea"], mark: "KR", code: "kr" },
+  { name: "Argentina", aliases: ["argentina"], mark: "AR", code: "ar" },
+  { name: "Bồ Đào Nha", aliases: ["bồ đào nha", "portugal"], mark: "PT", code: "pt" },
+  { name: "Hà Lan", aliases: ["hà lan", "netherlands"], mark: "NL", code: "nl" },
+  { name: "Ma-rốc", aliases: ["ma-rốc", "morocco"], mark: "MA", code: "ma" },
+  { name: "Nhật Bản", aliases: ["nhật bản", "japan"], mark: "JP", code: "jp" },
+  { name: "Hoa Kỳ", aliases: ["hoa kỳ", "mỹ", "united states", "usa"], mark: "US", code: "us" },
+  { name: "Pháp", aliases: ["pháp", "france"], mark: "FR", code: "fr" },
+  { name: "Anh", aliases: ["đội tuyển anh", "england"], mark: "GB", code: "gb-eng" },
+  { name: "Brazil", aliases: ["brazil", "brasil"], mark: "BR", code: "br" },
+  { name: "Đức", aliases: ["đội tuyển đức", "germany"], mark: "DE", code: "de" },
+  { name: "Italy", aliases: ["italy", "ý"], mark: "IT", code: "it" },
+  { name: "Real Madrid", aliases: ["real madrid"], mark: "RM", kind: "club" },
+  { name: "Barcelona", aliases: ["barcelona", "barca"], mark: "FCB", kind: "club" },
+  { name: "Man City", aliases: ["man city", "manchester city"], mark: "MCI", kind: "club" },
+  { name: "Man Utd", aliases: ["man utd", "man united", "manchester united"], mark: "MUN", kind: "club" },
+  { name: "Liverpool", aliases: ["liverpool"], mark: "LIV", kind: "club" },
+  { name: "Arsenal", aliases: ["arsenal"], mark: "ARS", kind: "club" },
+  { name: "Chelsea", aliases: ["chelsea"], mark: "CHE", kind: "club" },
+  { name: "Bayern Munich", aliases: ["bayern munich", "bayern"], mark: "FCB", kind: "club" },
+  { name: "PSG", aliases: ["paris saint-germain", "psg"], mark: "PSG", kind: "club" },
+  { name: "Inter Milan", aliases: ["inter milan", "inter"], mark: "INT", kind: "club" },
+  { name: "AC Milan", aliases: ["ac milan"], mark: "MIL", kind: "club" },
+  { name: "Juventus", aliases: ["juventus"], mark: "JUV", kind: "club" },
+  { name: "Dortmund", aliases: ["dortmund"], mark: "BVB", kind: "club" },
+  { name: "Tottenham", aliases: ["tottenham", "spurs"], mark: "TOT", kind: "club" },
+];
+
+function fixtureFrom(item: Item): Fixture | null {
+  const text = [item.title, item.summary, item.excerpt].filter(Boolean).join(" ").toLocaleLowerCase("vi");
+  const score = /\b(\d{1,2})\s*[-–:]\s*(\d{1,2})\b/.exec(text);
+  if (!score || score.index < 0) return null;
+
+  const found = teams
+    .map((team) => {
+      const positions = team.aliases.map((alias) => text.indexOf(alias)).filter((index) => index >= 0);
+      return positions.length ? { team, index: Math.min(...positions) } : null;
+    })
+    .filter((entry): entry is { team: Team; index: number } => Boolean(entry))
+    .sort((a, b) => a.index - b.index);
+  if (found.length < 2) return null;
+
+  const beforeScore = found.filter((entry) => entry.index < score.index);
+  const pair = beforeScore.length >= 2 ? beforeScore.slice(-2) : found.slice(0, 2);
+  if (pair[0].team.name === pair[1].team.name) return null;
+
+  const homeScore = score[1];
+  const awayScore = score[2];
+  const canonical = [
+    { name: pair[0].team.name, score: homeScore },
+    { name: pair[1].team.name, score: awayScore },
+  ].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  return {
+    key: `${canonical[0].name}-${canonical[0].score}-${canonical[1].name}-${canonical[1].score}`,
+    home: pair[0].team,
+    away: pair[1].team,
+    homeScore,
+    awayScore,
+  };
+}
+
+function TeamMark({ team }: { team: Team }) {
+  return (
+    <i className={`team-mark ${team.kind || "country"}`}>
+      {team.code ? (
+        <img src={`https://flagcdn.com/w80/${team.code}.png`} alt={`Cờ ${team.name}`} />
+      ) : (
+        team.mark
+      )}
+    </i>
+  );
+}
+
+function shortDate(value?: string) {
+  if (!value) return "Mới cập nhật";
+  return new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(
+    new Date(value),
+  );
 }
