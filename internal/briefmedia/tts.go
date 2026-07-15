@@ -7,10 +7,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -40,12 +42,16 @@ func (t *TTS) Render(ctx context.Context, transcript, outputPath string) (int, e
 	}
 	// Short chunks are more reliable with Gemini speech: long single responses
 	// can finish naturally while silently omitting the tail of the transcript.
-	chunks := splitTranscript(transcript, 950)
+	transcript = normalizeSpeechText(transcript)
+	chunks := splitTranscript(transcript, 760)
 	var pcm []byte
-	for _, chunk := range chunks {
+	for index, chunk := range chunks {
 		part, err := t.generatePCM(ctx, chunk)
 		if err != nil {
 			return 0, err
+		}
+		if index > 0 {
+			pcm = append(pcm, make([]byte, sampleRate*2*90/1000)...)
 		}
 		pcm = append(pcm, part...)
 	}
@@ -64,7 +70,14 @@ func (t *TTS) Render(ctx context.Context, transcript, outputPath string) (int, e
 func (t *TTS) generatePCM(ctx context.Context, transcript string) ([]byte, error) {
 	payload := map[string]any{
 		"contents": []any{map[string]any{"parts": []any{map[string]string{
-			"text": "Đọc bản tin thể thao tiếng Việt sau bằng giọng phát thanh viên tự nhiên, rõ ràng, khỏe khoắn; không đọc phần hướng dẫn. Nội dung:\n" + transcript,
+			"text": `Hãy tổng hợp giọng nói cho một bản tin thể thao tiếng Việt.
+Giọng phát thanh viên trong trẻo, ấm và dễ nghe; tự nhiên như đang trò chuyện với thính giả, không lên gân và không mang âm sắc quảng cáo.
+Đọc với tốc độ vừa phải, nhấn nhẹ tên người, đội bóng và tỷ số. Ngắt hơi rõ giữa các câu; giữ âm lượng, cao độ và chất giọng ổn định xuyên suốt.
+Tuyệt đối không đọc phần hướng dẫn này. Chỉ đọc nguyên văn nội dung nằm giữa hai thẻ BẢN_TIN.
+
+<BẢN_TIN>
+` + transcript + `
+</BẢN_TIN>`,
 		}}}},
 		"generationConfig": map[string]any{
 			"responseModalities": []string{"AUDIO"},
@@ -131,6 +144,35 @@ func (t *TTS) generatePCM(ctx context.Context, transcript string) ([]byte, error
 	return nil, lastErr
 }
 
+var speechTags = regexp.MustCompile(`<[^>]+>`)
+var speechSentence = regexp.MustCompile(`[^.!?]+(?:[.!?]+|$)`)
+
+func normalizeSpeechText(text string) string {
+	text = html.UnescapeString(text)
+	text = speechTags.ReplaceAllString(text, " ")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	replacer := strings.NewReplacer(
+		"BaoTheX", "Báo Thể Ích",
+		"HLV", "huấn luyện viên",
+		"ĐT Việt Nam", "đội tuyển Việt Nam",
+		"FIFA", "Phi-pha",
+		"UEFA", "U-ê-pha",
+		"NBA", "en-bi-ây",
+		"AFF Cup", "A ép ép Cúp",
+		"World Cup", "Uôn Cúp",
+	)
+	text = replacer.Replace(text)
+	text = strings.ReplaceAll(text, "…", ".")
+	blocks := strings.Split(text, "\n\n")
+	clean := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if block = strings.Join(strings.Fields(block), " "); block != "" {
+			clean = append(clean, block)
+		}
+	}
+	return strings.Join(clean, "\n\n")
+}
+
 func splitTranscript(text string, max int) []string {
 	paragraphs := strings.Split(text, "\n\n")
 	var chunks []string
@@ -164,6 +206,41 @@ func splitTranscript(text string, max int) []string {
 }
 
 func splitLongSpeech(text string, max int) []string {
+	sentences := speechSentence.FindAllString(text, -1)
+	if len(sentences) > 1 {
+		var chunks []string
+		var current string
+		for _, sentence := range sentences {
+			sentence = strings.TrimSpace(sentence)
+			if sentence == "" {
+				continue
+			}
+			if len([]rune(sentence)) > max {
+				if current != "" {
+					chunks = append(chunks, current)
+					current = ""
+				}
+				chunks = append(chunks, splitSpeechWords(sentence, max)...)
+				continue
+			}
+			if current != "" && len([]rune(current))+len([]rune(sentence))+1 > max {
+				chunks = append(chunks, current)
+				current = sentence
+			} else if current == "" {
+				current = sentence
+			} else {
+				current += " " + sentence
+			}
+		}
+		if current != "" {
+			chunks = append(chunks, current)
+		}
+		return chunks
+	}
+	return splitSpeechWords(text, max)
+}
+
+func splitSpeechWords(text string, max int) []string {
 	words := strings.Fields(text)
 	var chunks []string
 	var current []string

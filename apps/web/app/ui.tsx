@@ -8,11 +8,8 @@ export function SiteHeader() {
   const links = [
     ["/", "Dòng tin"],
     ["/goc-nhin", "Góc nhìn"],
-    ["/nghien-cuu", "Nghiên cứu"],
     ["/video", "Video"],
-    ["/podcast", "Podcast"],
     ["/chu-de", "Chủ đề"],
-    ["/nhan-vat", "Nhân vật"],
     ["/nguon", "Nguồn"],
   ];
   return (
@@ -41,7 +38,7 @@ export function SiteHeader() {
       </div>
       <div className="ticker">
         <div className="wrap">
-          <b>● ĐANG CẬP NHẬT</b> Nghiên cứu, video và kiến thức tập luyện được chọn lọc mỗi ngày
+          <b>● ĐANG CẬP NHẬT</b> Tin nóng, video và góc nhìn thể thao được chọn lọc mỗi ngày
         </div>
       </div>
       <div className="subbar">
@@ -109,9 +106,7 @@ export function Footer() {
         <div className="brand">
           Bao<i>TheX</i>
         </div>
-        <small>
-          Nền tảng tổng hợp bài viết, nghiên cứu và kiến thức tập luyện có dẫn nguồn cho người Việt.
-        </small>
+        <small>Báo thể thao đa nguồn, đối chiếu thông tin và biên tập bằng tiếng Việt.</small>
       </div>
     </footer>
   );

@@ -17,3 +17,33 @@ func TestSplitTranscriptNeverExceedsLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeSpeechTextCleansEditorialNoise(t *testing.T) {
+	input := "HLV &amp; ĐT Việt Nam dự FIFA World Cup. <b>BaoTheX</b> cập nhật…"
+	got := normalizeSpeechText(input)
+	for _, expected := range []string{
+		"huấn luyện viên & đội tuyển Việt Nam",
+		"Phi-pha Uôn Cúp",
+		"Báo Thể Ích",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("normalized speech missing %q: %s", expected, got)
+		}
+	}
+	if strings.Contains(got, "<b>") || strings.Contains(got, "&amp;") || strings.Contains(got, "…") {
+		t.Fatalf("speech still contains markup noise: %s", got)
+	}
+}
+
+func TestSplitTranscriptPrefersSentenceBoundaries(t *testing.T) {
+	text := strings.Repeat("Đây là một câu hoàn chỉnh về thể thao. ", 24)
+	chunks := splitTranscript(text, 170)
+	if len(chunks) < 2 {
+		t.Fatalf("expected multiple chunks, got %d", len(chunks))
+	}
+	for _, chunk := range chunks[:len(chunks)-1] {
+		if !strings.HasSuffix(chunk, ".") {
+			t.Fatalf("chunk ended mid-sentence: %q", chunk)
+		}
+	}
+}

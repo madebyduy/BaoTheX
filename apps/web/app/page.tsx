@@ -130,6 +130,9 @@ export default async function Home() {
           </section>
           <aside className="sports-rail">
             <DailyBriefPlayer />
+            <div className="rail-separator">
+              <span>KHÁM PHÁ THEO MÔN</span>
+            </div>
             <div className="rail-card">
               <h3>Chủ đề thể thao</h3>
               {sportsTopics.slice(0, 10).map((topic) => (

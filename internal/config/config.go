@@ -81,7 +81,7 @@ func Load() (*Config, error) {
 		TelegramPolling:       envBool("TELEGRAM_POLLING", strings.Contains(env("PUBLIC_BASE_URL", ""), "localhost")),
 		TTSAPIKey:             env("TTS_API_KEY", env("LLM_API_KEY", "")),
 		TTSModel:              env("TTS_MODEL", "gemini-2.5-flash-preview-tts"),
-		TTSVoice:              env("TTS_VOICE", "Kore"),
+		TTSVoice:              env("TTS_VOICE", "Erinome"),
 		MediaStorageDir:       env("MEDIA_STORAGE_DIR", "./var/media"),
 		MediaPublicBaseURL:    env("MEDIA_PUBLIC_BASE_URL", env("PUBLIC_BASE_URL", "http://localhost:3000")),
 		FFmpegPath:            env("FFMPEG_PATH", "ffmpeg"),

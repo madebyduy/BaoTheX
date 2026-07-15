@@ -8,16 +8,14 @@ export default async function Page() {
         <PageTitle
           eyebrow="Dòng tin"
           title="Tất cả nội dung"
-          description="Bài viết, nghiên cứu, video và podcast mới nhất được cập nhật từ các nguồn đã kiểm duyệt."
+          description="Tin thể thao và video mới nhất được cập nhật từ các nguồn đã kiểm duyệt."
         />
         <div className="layout">
           <aside className="side">
             <span className="eyebrow">Bộ lọc</span>
             <a href="/danh-muc">Mới nhất</a>
             <a href="/danh-muc?sort=top">Nổi bật</a>
-            <a href="/nghien-cuu">Nghiên cứu</a>
             <a href="/video">Video</a>
-            <a href="/podcast">Podcast</a>
           </aside>
           <section>
             <ItemGrid items={items} />
