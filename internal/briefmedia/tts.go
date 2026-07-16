@@ -17,12 +17,19 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"repwire/internal/ratelimit"
 )
 
 const sampleRate = 24000
 const speechChunkRunes = 1800
 
 var ErrQuotaExceeded = fmt.Errorf("tts quota exceeded")
+
+// maxChunkAttempts is how many times one key is tried for a single narration
+// chunk before we accept that it really is out of quota and rotate. It must be
+// at least 2, or a rate-limit wait can never actually be followed by a retry.
+const maxChunkAttempts = 3
 
 // TTS narrates the audio brief. It holds a dedicated pool of API keys (kept
 // separate from the summarizer's keys so summarization can't drain the audio
@@ -32,6 +39,10 @@ type TTS struct {
 	voice  string
 	client *http.Client
 
+	// pacer is shared with the summarizer: both talk to the same Gemini project
+	// and draw on the same per-minute allowance.
+	pacer *ratelimit.Pacer
+
 	mu       sync.Mutex
 	apiKeys  []string
 	keyIndex int
@@ -39,14 +50,22 @@ type TTS struct {
 
 // NewTTS constructs a TTS narrator. apiKeys is the rotation pool; empty and
 // blank entries are dropped.
-func NewTTS(apiKeys []string, model, voice string) *TTS {
+// pacer may be nil to disable rate pacing. Pass the same Pacer given to the
+// summarizer so the two share one per-minute budget.
+func NewTTS(apiKeys []string, model, voice string, pacer *ratelimit.Pacer) *TTS {
 	keys := make([]string, 0, len(apiKeys))
 	for _, k := range apiKeys {
 		if s := strings.TrimSpace(k); s != "" {
 			keys = append(keys, s)
 		}
 	}
-	return &TTS{apiKeys: keys, model: model, voice: voice, client: &http.Client{Timeout: 90 * time.Second}}
+	return &TTS{
+		apiKeys: keys,
+		model:   model,
+		voice:   voice,
+		pacer:   pacer,
+		client:  &http.Client{Timeout: 90 * time.Second},
+	}
 }
 
 func (t *TTS) Enabled() bool { return len(t.apiKeys) > 0 && t.model != "" }
@@ -153,7 +172,13 @@ Tuyệt đối không đọc phần hướng dẫn này. Chỉ đọc nguyên v�
 // and the error.
 func (t *TTS) requestChunk(ctx context.Context, endpoint string, body []byte, key string) ([]byte, bool, error) {
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < maxChunkAttempts; attempt++ {
+		// Share the summarizer's pacer: one Gemini project, one per-minute
+		// allowance. A brief is several chunks, so without this the audio job
+		// alone can exhaust the minute and take translation down with it.
+		if err := t.pacer.Wait(ctx); err != nil {
+			return nil, false, err
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, false, err
@@ -176,13 +201,34 @@ func (t *TTS) requestChunk(ctx context.Context, endpoint string, body []byte, ke
 			select {
 			case <-ctx.Done():
 				return nil, false, ctx.Err()
-			case <-time.After(time.Duration(attempt+1) * time.Second):
+			case <-time.After(ratelimit.Backoff(attempt + 1)):
 			}
 			continue
 		}
 		if resp.StatusCode >= 400 {
 			if resp.StatusCode == http.StatusTooManyRequests {
-				return nil, true, fmt.Errorf("%w: %s", ErrQuotaExceeded, clip(string(data), 300))
+				// A 429 is "you are going too fast", not "this key is spent".
+				// Free-tier Gemini allows only a few requests per minute and a
+				// brief is rendered in several chunks, so a long edition trips
+				// this every time. Returning immediately meant we rotated to the
+				// second key, tripped the same limit within milliseconds, and
+				// declared both keys exhausted — which is why the audio brief has
+				// produced exactly one file. Wait out the window the way the
+				// provider asked, and only give up on the key if it keeps saying
+				// no after that.
+				lastErr = fmt.Errorf("%w: %s", ErrQuotaExceeded, clip(string(data), 300))
+				if attempt == maxChunkAttempts-1 {
+					return nil, true, lastErr
+				}
+				wait := ratelimit.Wait(attempt+1, string(data))
+				slog.Warn("tts rate limited, waiting before retry",
+					"attempt", attempt+1, "wait", wait)
+				select {
+				case <-ctx.Done():
+					return nil, false, ctx.Err()
+				case <-time.After(wait):
+				}
+				continue
 			}
 			return nil, false, fmt.Errorf("tts: Gemini http %d: %s", resp.StatusCode, clip(string(data), 300))
 		}

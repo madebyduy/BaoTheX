@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -372,6 +373,37 @@ func (r *ContentRepo) SetVietnameseContent(ctx context.Context, contentID int64,
 			translated_at=now(), updated_at=now() WHERE content_id=$1 RETURNING content_id)
 		UPDATE content_items SET translated_title=$2
 		WHERE id=$1 AND EXISTS (SELECT 1 FROM saved_body)`, contentID, title, body)
+	return err
+}
+
+// TranslationDigested marks a foreign article that has a reader-facing
+// Vietnamese headline, summary and key points but deliberately no translated
+// body.
+//
+// It is a distinct state from 'ready' for one reason: a digested article may
+// still earn a full translation later, if its cluster wins the day and the
+// analysis desk needs it as source material. Marking it 'ready' would tell
+// IDsPendingTranslationForCluster the work was already done and quietly starve
+// the piece it was gathered for.
+const TranslationDigested = "digested"
+
+// SetForeignDigest stores the reader-facing Vietnamese form of a foreign
+// article: a headline on content_items, and the digested marker on the body row.
+//
+// original_body stays — it is the input for a later full translation if this
+// story wins the day — but vietnamese_body is cleared, not merely left alone.
+// Clearing matters: a stale job from before this pipeline changed can arrive
+// after an article was already translated in full, and leaving that copy behind
+// would keep a Vietnamese reproduction of someone else's article in the
+// database while every comment here claims we don't hold one. The daily pick
+// regenerates what it needs.
+func (r *ContentRepo) SetForeignDigest(ctx context.Context, contentID int64, title string) error {
+	_, err := r.db.Pool.Exec(ctx, `WITH marked AS (
+		UPDATE content_bodies SET translation_status=$3, vietnamese_body=NULL,
+			translated_at=now(), updated_at=now()
+		WHERE content_id=$1 RETURNING content_id)
+		UPDATE content_items SET translated_title=$2
+		WHERE id=$1 AND EXISTS (SELECT 1 FROM marked)`, contentID, title, TranslationDigested)
 	return err
 }
 
@@ -871,17 +903,66 @@ func (r *ContentRepo) IDsToRescore(ctx context.Context, limit int) ([]int64, err
 	return ids, rows.Err()
 }
 
-// IDsPendingTranslation returns foreign stories that are intentionally hidden
-// from public feeds until their Vietnamese edition is stored.
-func (r *ContentRepo) IDsPendingTranslation(ctx context.Context, limit int) ([]int64, error) {
+// IDsPendingTranslation returns foreign articles worth spending a translation
+// call on, best first.
+//
+// Two floors, and both matter:
+//
+// minScore parks the low scorers so routine wire copy cannot drain the hourly
+// LLM allowance out from under the editorial desk.
+//
+// maxAge is the one that keeps the pipeline honest. A queue is the wrong shape
+// for news, because news expires: without a cutoff, a backlog that outgrows the
+// hourly allowance means the worker spends today translating last week, forever
+// behind and publishing nothing anyone wants. So anything older than maxAge is
+// abandoned rather than queued — not dropped by accident when the backlog wins,
+// but on purpose, while it is still our decision to make. If we did not get to a
+// story while it was news, it is not news any more.
+func (r *ContentRepo) IDsPendingTranslation(ctx context.Context, limit int, minScore float64, maxAge time.Duration) ([]int64, error) {
 	rows, err := r.db.Pool.Query(ctx, `
 		SELECT c.id FROM content_items c
 		JOIN content_bodies b ON b.content_id=c.id
 		WHERE c.language <> 'vi' AND c.status='processing'
+		  AND b.translation_status NOT IN ('ready', 'digested')
+		  AND length(trim(b.original_body)) > 0
+		  AND c.base_score >= $2
+		  AND c.published_at >= now() - $3::interval
+		ORDER BY c.final_score DESC, c.published_at DESC NULLS LAST
+		LIMIT $1`, limit, minScore, maxAge.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// IDsPendingTranslationForCluster returns the untranslated foreign articles in
+// one cluster, best source first, ignoring the score floor.
+//
+// This is the deliberate exception to parking: once a cluster has won the day,
+// its materials are worth translating regardless of what each individual
+// headline scored, because the value is in the story, not the article.
+func (r *ContentRepo) IDsPendingTranslationForCluster(ctx context.Context, clusterID int64, limit int) ([]int64, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT c.id FROM content_items c
+		JOIN story_cluster_items sci ON sci.content_id=c.id
+		JOIN content_bodies b ON b.content_id=c.id
+		JOIN sources s ON s.id=c.source_id
+		WHERE sci.cluster_id=$1
+		  AND c.language <> 'vi'
+		  AND c.status IN ('processing','needs_review')
 		  AND b.translation_status <> 'ready'
 		  AND length(trim(b.original_body)) > 0
-		ORDER BY c.final_score DESC, c.published_at DESC NULLS LAST
-		LIMIT $1`, limit)
+		ORDER BY s.quality DESC, c.final_score DESC
+		LIMIT $2`, clusterID, limit)
 	if err != nil {
 		return nil, err
 	}

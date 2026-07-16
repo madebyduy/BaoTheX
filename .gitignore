@@ -9,9 +9,13 @@ apps/api/api
 apps/worker/worker
 
 # Env
+# Catch every .env variant (.env.backup, .env.prod, .env.old) — only the
+# committed .env.example is exempt. Listing just ".env" left a copy like
+# .env.backup tracked and a real API key one `git add .` away from the remote.
 .env
+.env.*
+!.env.example
 var/
-.env.local
 *.local
 
 # Go

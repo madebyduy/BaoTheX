@@ -38,6 +38,11 @@ type Handlers struct {
 
 	// ScoreThreshold: only items with base_score >= this get summarized.
 	ScoreThreshold float64
+	// TranslateMinScore: only foreign articles with base_score >= this are
+	// translated on arrival. Everything below is parked, clustered but unspent.
+	// Both thresholds are compared against process.BaseScore and must stay below
+	// process.MaxArticleScore; config.Load enforces that.
+	TranslateMinScore float64
 }
 
 // Register returns the kind→handler map for the worker.
@@ -77,37 +82,42 @@ func (h *Handlers) handleTranslate(ctx context.Context, j *domain.Job) error {
 	if ingest.BlockedArticleText(body.OriginalBody) {
 		return h.DB.Content.QuarantineBlockedArticle(ctx, p.ContentID)
 	}
-	if ok, err := h.Summarizer.BudgetOK(ctx); err != nil {
+	// Report which ceiling actually refused: "hourly cap" and "daily budget" are
+	// fixed in different places, and conflating them sends an operator hunting
+	// through the wrong setting.
+	if refusal, err := h.Summarizer.BudgetStatus(ctx); err != nil {
 		return err
-	} else if !ok {
-		return process.ErrBudgetExceeded
+	} else if refusal != nil {
+		return refusal
 	}
 	item, err := h.DB.Content.Get(ctx, p.ContentID)
 	if err != nil {
 		return err
 	}
-	out, err := h.Summarizer.TranslateAndSummarize(ctx, item.Title, body.OriginalBody)
+	// Digest rather than translate. Readers get a Vietnamese headline, the key
+	// points and a few sentences of context, plus a link to the original; we do
+	// not republish a Vietnamese copy of someone else's article. That is roughly
+	// seven times cheaper and it is the difference between aggregating and
+	// reproducing. The full translation still happens for exactly one cluster a
+	// day, in the editorial path, and is never shown to readers.
+	out, err := h.Summarizer.DigestForeign(ctx, item.Title, body.OriginalBody)
 	if err != nil {
 		return err
 	}
-	if !looksVietnamese(out.VietnameseTitle) || !looksVietnamese(out.VietnameseBody) || strings.HasPrefix(strings.TrimSpace(out.VietnameseBody), "{") {
+	if !looksVietnamese(out.VietnameseTitle) || !looksVietnamese(out.Summary) {
 		return h.DB.Content.SetStatus(ctx, p.ContentID, domain.StatusNeedsReview)
 	}
-	if err := h.DB.Content.SetVietnameseContent(ctx, p.ContentID, out.VietnameseTitle, out.VietnameseBody); err != nil {
+	if err := h.DB.Content.SetForeignDigest(ctx, p.ContentID, out.VietnameseTitle); err != nil {
 		return err
 	}
+	// Re-cluster on the Vietnamese headline now that one exists: the trigram
+	// match runs on COALESCE(translated_title, title), so this can pull the piece
+	// together with Vietnamese coverage of the same event.
 	if err := h.DB.Content.ClusterContent(ctx, p.ContentID, out.VietnameseTitle); err != nil {
 		return err
 	}
-	if out.Summary == nil {
-		fallback, err := h.Summarizer.SummarizeArticle(ctx, item.Title, body.OriginalBody)
-		if err != nil {
-			return err
-		}
-		out.Summary = fallback.Summary
-		out.KeyPoints = fallback.KeyPoints
-	}
-	return h.DB.Content.SetSummary(ctx, p.ContentID, out.Summary, out.KeyPoints, domain.StatusReady)
+	summary := out.Summary
+	return h.DB.Content.SetSummary(ctx, p.ContentID, &summary, out.KeyPoints, domain.StatusReady)
 }
 
 // ---- fetch_* ----
@@ -233,6 +243,19 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 			if h.Summarizer == nil || !h.Summarizer.Enabled() {
 				return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)
 			}
+			// Translating a full body is the single most expensive call we make,
+			// so it is not something every arriving foreign article earns. Park
+			// the low scorers instead: cluster them on their original headline so
+			// they still count toward a story's heat, and leave them 'processing'.
+			// The daily pick can still come back and translate a parked item when
+			// its cluster wins the day, and IDsPendingTranslation will pick it up
+			// if a later rescore lifts it over the bar.
+			if item.BaseScore < h.TranslateMinScore {
+				if err := h.DB.Content.ClusterContent(ctx, item.ID, item.Title); err != nil {
+					return err
+				}
+				return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusProcessing)
+			}
 			return h.Enqueue.EnqueueTranslate(ctx, item.ID)
 		}
 	}
@@ -282,11 +305,12 @@ func (h *Handlers) handleSummarize(ctx context.Context, j *domain.Job) error {
 		return err
 	}
 
-	// Respect the daily budget: defer (retry later) rather than fail hard.
-	if ok, err := h.Summarizer.BudgetOK(ctx); err != nil {
+	// Respect both ceilings: defer (retry later) rather than fail hard, and name
+	// the one that refused.
+	if refusal, err := h.Summarizer.BudgetStatus(ctx); err != nil {
 		return err
-	} else if !ok {
-		return process.ErrBudgetExceeded
+	} else if refusal != nil {
+		return refusal
 	}
 
 	switch item.Type {

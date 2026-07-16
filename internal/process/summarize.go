@@ -15,6 +15,7 @@ import (
 
 	"repwire/internal/domain"
 	"repwire/internal/postgres"
+	"repwire/internal/ratelimit"
 )
 
 // Summarizer calls an LLM API to produce paraphrased summaries. It talks the
@@ -29,6 +30,11 @@ type Summarizer struct {
 	model   string
 	llm     *postgres.LLMRepo
 
+	// pacer spaces requests so concurrent workers cannot burst past the
+	// provider's per-minute limit. The hourly cap below bounds the total; this
+	// bounds the rate, and they are not the same thing.
+	pacer *ratelimit.Pacer
+
 	dailyBudgetUSD  float64
 	maxCallsPerHour int
 
@@ -40,7 +46,12 @@ type Summarizer struct {
 // NewSummarizer constructs a Summarizer. apiKeys is the rotation pool; empty and
 // blank entries are dropped. The keys are tried in order, advancing to the next
 // on quota exhaustion.
-func NewSummarizer(apiKeys []string, baseURL, model string, dailyBudgetUSD float64, maxCallsPerHour int, llm *postgres.LLMRepo) *Summarizer {
+//
+// pacer may be nil to disable rate pacing. Pass the same Pacer given to the TTS
+// renderer: both call the same Gemini project and therefore share one
+// per-minute allowance, so pacing them separately would let the two of them
+// stampede each other while each believed it was behaving.
+func NewSummarizer(apiKeys []string, baseURL, model string, dailyBudgetUSD float64, maxCallsPerHour int, llm *postgres.LLMRepo, pacer *ratelimit.Pacer) *Summarizer {
 	keys := make([]string, 0, len(apiKeys))
 	for _, k := range apiKeys {
 		if t := strings.TrimSpace(k); t != "" {
@@ -53,6 +64,7 @@ func NewSummarizer(apiKeys []string, baseURL, model string, dailyBudgetUSD float
 		baseURL:         baseURL,
 		model:           model,
 		llm:             llm,
+		pacer:           pacer,
 		dailyBudgetUSD:  dailyBudgetUSD,
 		maxCallsPerHour: maxCallsPerHour,
 	}
@@ -122,48 +134,91 @@ func classify(status int, msg string) retryPolicy {
 	}
 }
 
-// retryBackoff returns the delay before the next attempt on the same key
-// (0.5s, 1s, 1.5s, ...).
-func retryBackoff(attempt int) time.Duration {
-	return time.Duration(attempt) * 500 * time.Millisecond
-}
+// Retry pacing lives in internal/ratelimit, shared with the TTS renderer: both
+// talk to the same rate-limited Gemini endpoints and both once mistook a
+// "slow down for 49s" for a dead key.
 
-// ErrBudgetExceeded is returned when today's LLM spend has hit the cap.
+// ErrBudgetExceeded means today's LLM *spend* hit LLM_DAILY_BUDGET_USD.
 var ErrBudgetExceeded = fmt.Errorf("llm daily budget exceeded")
 
-// BudgetOK reports whether there is remaining daily budget.
+// ErrHourlyCapReached means the LLM_MAX_CALLS_PER_HOUR throttle is full. It is
+// a pacing limit, not a money limit, and it clears on its own within the hour —
+// which is exactly why it must never be reported as a budget problem.
+var ErrHourlyCapReached = fmt.Errorf("llm hourly call cap reached")
+
+// BudgetOK reports whether background work may spend a call right now, i.e.
+// both the hourly throughput cap and the daily spend ceiling allow it.
+//
+// Prefer BudgetStatus when the answer will reach a human: this bool cannot say
+// which of the two ceilings said no, and they are fixed in completely different
+// places.
 func (s *Summarizer) BudgetOK(ctx context.Context) (bool, error) {
+	err, checkErr := s.BudgetStatus(ctx)
+	if checkErr != nil {
+		return false, checkErr
+	}
+	return err == nil, nil
+}
+
+// BudgetStatus returns the specific reason background work must wait, or nil
+// when it may proceed. The second error is for a failed check, not a refusal.
+//
+// Two ceilings guard the LLM and they are unrelated: LLM_MAX_CALLS_PER_HOUR
+// paces throughput, LLM_DAILY_BUDGET_USD caps money. Reporting both as
+// "daily budget exceeded" sent an operator to stare at a spend meter reading
+// $0.00 of $0.50 while the real blocker — a 10-calls-per-hour throttle hit in
+// the first few seconds — went unmentioned. An error that names the wrong
+// ceiling is worse than no error: it actively misdirects.
+func (s *Summarizer) BudgetStatus(ctx context.Context) (error, error) {
 	if s.maxCallsPerHour > 0 {
 		calls, err := s.llm.CallsLastHour(ctx)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		if calls >= s.maxCallsPerHour {
-			return false, nil
+			return fmt.Errorf("%w: %d/%d calls used this hour (raise LLM_MAX_CALLS_PER_HOUR)",
+				ErrHourlyCapReached, calls, s.maxCallsPerHour), nil
 		}
 	}
-	return s.dailyBudgetOK(ctx)
+	if s.dailyBudgetUSD > 0 {
+		spent, err := s.llm.SpendToday(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if spent >= s.dailyBudgetUSD {
+			return fmt.Errorf("%w: $%.4f/$%.2f spent today (raise LLM_DAILY_BUDGET_USD)",
+				ErrBudgetExceeded, spent, s.dailyBudgetUSD), nil
+		}
+	}
+	return nil, nil
 }
 
-// dailyBudgetOK checks the hard spend ceiling without applying the shared
-// hourly throughput cap. Admin-selected editorial analysis uses this check so
-// bulk translation cannot starve a deliberate newsroom action.
-func (s *Summarizer) dailyBudgetOK(ctx context.Context) (bool, error) {
+// editorialBudgetStatus is the spend ceiling alone, skipping the hourly pacing
+// throttle. A deliberate newsroom decision answers to money, not to the queue
+// depth of background translation.
+func (s *Summarizer) editorialBudgetStatus(ctx context.Context) (error, error) {
 	if s.dailyBudgetUSD <= 0 {
-		return true, nil
+		return nil, nil
 	}
 	spent, err := s.llm.SpendToday(ctx)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return spent < s.dailyBudgetUSD, nil
+	if spent >= s.dailyBudgetUSD {
+		return fmt.Errorf("%w: $%.4f/$%.2f spent today (raise LLM_DAILY_BUDGET_USD)",
+			ErrBudgetExceeded, spent, s.dailyBudgetUSD), nil
+	}
+	return nil, nil
 }
 
-// EditorialBudgetOK is the budget gate for an admin-selected analysis. It
-// keeps the hard daily spend limit while leaving the shared hourly throughput
-// cap to background translation jobs.
+// EditorialBudgetOK is the budget gate for editorial analysis: the hard daily
+// spend limit, without the hourly throughput cap that paces background jobs.
 func (s *Summarizer) EditorialBudgetOK(ctx context.Context) (bool, error) {
-	return s.dailyBudgetOK(ctx)
+	refusal, err := s.editorialBudgetStatus(ctx)
+	if err != nil {
+		return false, err
+	}
+	return refusal == nil, nil
 }
 
 // ArticleSummary is the expected JSON shape from the article prompt.
@@ -208,27 +263,32 @@ func (s *Summarizer) SummarizeArticle(ctx context.Context, title, body string) (
 	return &out, nil
 }
 
+// claimsMaxTokens must fit four arrays of sourced claims drawn from up to six
+// materials. At 2,200 the model ran out mid-sentence and the response failed to
+// parse, which threw away the call, the claims and the day's piece — the desk's
+// single most common hard failure. Truncation is cheap to prevent and expensive
+// to hit.
+const claimsMaxTokens = 4000
+
 // ExtractAnalysisClaims is stage one of the analysis pipeline. It does not
 // write prose; it maps agreement, disagreement and source-exclusive claims.
 func (s *Summarizer) ExtractAnalysisClaims(ctx context.Context, title string, materials []domain.AnalysisMaterial) (*domain.AnalysisClaims, error) {
-	prompt := fmt.Sprintf(`Bạn là trưởng ban dữ liệu của một tòa soạn thể thao Việt Nam.
-Từ hồ sơ nhiều nguồn dưới đây, chỉ trích xuất những điều có bằng chứng trong nguyên liệu.
-Phân biệt rõ: điều các nguồn đồng thuận; điểm các nguồn vênh/mâu thuẫn; thông tin chỉ một nguồn nêu; câu hỏi chưa thể kết luận.
-Mỗi ý phải ghi tên nguồn trong ngoặc. Không suy đoán và không biến tin đồn thành sự thật.
-Chỉ trả JSON đúng schema:
-{"consensus":["..."],"conflicts":["..."],"unique_claims":["..."],"open_questions":["..."]}
-
-SỰ KIỆN: %s
-NGUYÊN LIỆU:
-%s`, title, clip(formatAnalysisMaterials(materials), 26000))
-	_ = prompt // Kept for backward-compatible source context; use the repaired UTF-8 prompt below.
-	raw, err := s.completeEditorial(ctx, analysisClaimsPrompt(title, materials), 2200)
+	raw, err := s.completeEditorial(ctx, analysisClaimsPrompt(title, materials), claimsMaxTokens)
 	if err != nil {
 		return nil, err
 	}
 	var out domain.AnalysisClaims
 	if err := json.Unmarshal([]byte(extractJSON(raw)), &out); err != nil {
-		return nil, fmt.Errorf("parse analysis claims: %w", err)
+		// A response cut off at the token ceiling is still mostly good evidence.
+		// Salvage the complete entries rather than lose the call: the alternative
+		// is no piece at all, and stage two only needs a map of what the sources
+		// agree and disagree on, not every last item.
+		repaired := repairTruncatedJSON(extractJSON(raw))
+		if repairErr := json.Unmarshal([]byte(repaired), &out); repairErr != nil {
+			return nil, fmt.Errorf("parse analysis claims: %w", err)
+		}
+		slog.Warn("analysis claims were truncated; recovered the complete entries",
+			"consensus", len(out.Consensus), "conflicts", len(out.Conflicts))
 	}
 	if out.Consensus == nil {
 		out.Consensus = []string{}
@@ -368,9 +428,87 @@ func (s *Summarizer) TranslateToVietnamese(ctx context.Context, body string) (st
 	return s.complete(ctx, prompt, 6000)
 }
 
+// ForeignDigest is what a foreign article becomes for readers: a Vietnamese
+// headline, the points that matter, and a few sentences of context. No body.
+//
+// This is deliberately not a translation. Republishing a full Vietnamese copy of
+// a Reuters or Guardian article is a derivative work of someone else's
+// reporting, and it costs roughly seven times as much to produce: measured on
+// live traffic, a full translation ran ~1,240 output tokens to make something
+// averaging 0.67 views. A digest is a few hundred tokens, it is the standard
+// defensible aggregation pattern, and — because the reader who does not speak
+// English cannot use a link to the original — it has to stand on its own. The
+// summary is the product, not a teaser for one.
+type ForeignDigest struct {
+	VietnameseTitle string   `json:"vietnamese_title"`
+	Summary         string   `json:"summary"`
+	KeyPoints       []string `json:"key_points"`
+}
+
+// digestPrompt asks for reader-facing Vietnamese without reproducing the source.
+//
+// The length here is a judgement call that only survived contact with the live
+// page: at 3-4 sentences the article read as a stub — you learned the news and
+// hit a link, with half the screen empty. Eight to ten sentences fills the page
+// and carries the detail a reader who cannot open an English original actually
+// needs, while still being our writing rather than a copy of theirs.
+const digestPrompt = `Bạn là biên tập viên báo thể thao Việt Nam. Đọc bài báo tiếng nước ngoài dưới đây rồi viết lại bằng tiếng Việt cho độc giả KHÔNG đọc được tiếng Anh.
+
+YÊU CẦU:
+- Người đọc chỉ xem phần bạn viết, không mở bài gốc. Vì vậy phần viết phải ĐỦ Ý và tự đứng được: đọc xong là nắm trọn câu chuyện, không thấy thiếu.
+- Có bối cảnh: chuyện gì xảy ra, ai liên quan, vì sao đáng chú ý, ảnh hưởng ra sao.
+- Giữ nguyên tên vận động viên, câu lạc bộ, giải đấu, tỷ số, số liệu, thời gian.
+- Viết lại bằng lời của bạn, mạch lạc như một bài báo ngắn. TUYỆT ĐỐI không dịch nguyên văn từng câu và không sao chép đoạn dài.
+- Trung lập, không phóng đại, không suy đoán. Nếu bài gốc có phát biểu đáng chú ý, hãy thuật lại ý thay vì trích dài.
+
+Chỉ trả JSON hợp lệ, không markdown fence:
+{"vietnamese_title":"tiêu đề tiếng Việt rõ nội dung","summary":"8-10 câu tiếng Việt, chia 2-3 đoạn ngăn cách bằng \n\n, đủ để hiểu trọn tin mà không cần bài gốc","key_points":["5-7 ý chính, mỗi ý một câu ngắn"]}
+
+TIÊU ĐỀ GỐC: %s
+NỘI DUNG GỐC:
+%s`
+
+// DigestForeign turns a foreign article into a Vietnamese headline, key points
+// and a self-contained summary — the reader-facing form — without translating
+// the body.
+//
+// The source is clipped harder than the old translation path (6k vs 18k chars):
+// the tail of a match report rarely changes the summary, and input is the cheap
+// half of a call we are trying to make cheap. The output ceiling has room for
+// ten sentences plus seven key points; too tight and the model truncates
+// mid-JSON, which fails the parse and wastes the whole call.
+func (s *Summarizer) DigestForeign(ctx context.Context, title, body string) (*ForeignDigest, error) {
+	prompt := fmt.Sprintf(digestPrompt, title, clip(body, 6000))
+	raw, err := s.completeWithBudget(ctx, prompt, 2000, false)
+	if err != nil {
+		return nil, err
+	}
+	var out ForeignDigest
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &out); err != nil {
+		return nil, fmt.Errorf("parse foreign digest: %w", err)
+	}
+	out.VietnameseTitle = strings.TrimSpace(out.VietnameseTitle)
+	out.Summary = strings.TrimSpace(out.Summary)
+	if out.VietnameseTitle == "" {
+		out.VietnameseTitle = title
+	}
+	if out.KeyPoints == nil {
+		out.KeyPoints = []string{}
+	}
+	if out.Summary == "" {
+		return nil, fmt.Errorf("foreign digest returned no summary")
+	}
+	return &out, nil
+}
+
 // TranslationSummary contains one-pass translation output. Keeping this in a
 // single request is materially cheaper than translating and summarizing in two
 // separate calls.
+//
+// Only the editorial path still uses this. A full translation is expensive and
+// legally awkward to publish, so it is now produced for one cluster a day and
+// never shown to readers — it exists purely as raw material for the analysis
+// prompt, which turns several sources into an original, sourced piece.
 type TranslationSummary struct {
 	VietnameseTitle string   `json:"vietnamese_title"`
 	VietnameseBody  string   `json:"vietnamese_body"`
@@ -379,8 +517,22 @@ type TranslationSummary struct {
 }
 
 // TranslateAndSummarize performs the two reader-facing transformations in one
-// model call and returns structured JSON for reliable storage.
+// model call and returns structured JSON for reliable storage. It runs on the
+// background budget: the shared hourly cap paces it alongside routine wire work.
 func (s *Summarizer) TranslateAndSummarize(ctx context.Context, title, body string) (*TranslationSummary, error) {
+	return s.translateAndSummarize(ctx, title, body, false)
+}
+
+// TranslateAndSummarizeEditorial is the same call on the editorial budget path:
+// it skips the shared hourly throughput cap while still honouring the hard daily
+// spend ceiling. The daily pick uses it so that once the newsroom has committed
+// to a story, translating its materials cannot be starved by a backlog of
+// routine articles queued ahead of it.
+func (s *Summarizer) TranslateAndSummarizeEditorial(ctx context.Context, title, body string) (*TranslationSummary, error) {
+	return s.translateAndSummarize(ctx, title, body, true)
+}
+
+func (s *Summarizer) translateAndSummarize(ctx context.Context, title, body string, editorial bool) (*TranslationSummary, error) {
 	prompt := fmt.Sprintf(`Bạn là biên tập viên báo thể thao Việt Nam. Hãy dịch tiêu đề và toàn bộ nội dung tiếng Anh sang tiếng Việt tự nhiên, chính xác; giữ nguyên tên vận động viên, câu lạc bộ, giải đấu, tỷ số, số liệu và thời gian. Sau đó tóm tắt đúng nội dung, không thêm suy đoán.
 Chỉ trả về JSON hợp lệ theo schema:
 {"vietnamese_title":"tiêu đề tiếng Việt","vietnamese_body":"bản dịch đầy đủ","summary":"3-4 câu tóm tắt tiếng Việt","key_points":["3-5 ý chính"]}
@@ -389,7 +541,7 @@ Nếu nội dung không đủ, vẫn dịch phần có sẵn và để summary l
 TIÊU ĐỀ: %s
 NỘI DUNG:
 %s`, title, clip(body, 18000))
-	raw, err := s.complete(ctx, prompt, 6500)
+	raw, err := s.completeWithBudget(ctx, prompt, 6500, editorial)
 	if err != nil {
 		return nil, err
 	}
@@ -494,14 +646,21 @@ func (s *Summarizer) completeWithBudget(ctx context.Context, prompt string, maxT
 	if !s.Enabled() {
 		return "", fmt.Errorf("summarizer: LLM_API_KEY not configured")
 	}
-	budgetCheck := s.BudgetOK
+	// Editorial work answers only to the money ceiling; background work also has
+	// to respect the hourly pacing throttle. Either way, surface the ceiling that
+	// actually said no.
+	var refusal error
+	var checkErr error
 	if editorial {
-		budgetCheck = s.dailyBudgetOK
+		refusal, checkErr = s.editorialBudgetStatus(ctx)
+	} else {
+		refusal, checkErr = s.BudgetStatus(ctx)
 	}
-	if ok, err := budgetCheck(ctx); err != nil {
-		return "", err
-	} else if !ok {
-		return "", ErrBudgetExceeded
+	if checkErr != nil {
+		return "", checkErr
+	}
+	if refusal != nil {
+		return "", refusal
 	}
 	if err := s.llm.RecordAttempt(ctx, s.model); err != nil {
 		return "", err
@@ -514,6 +673,13 @@ func (s *Summarizer) completeWithBudget(ctx context.Context, prompt string, maxT
 	for k := 0; k < len(s.apiKeys); k++ {
 		idx, key := s.currentKey()
 		for attempt := 1; attempt <= maxAttemptsPerKey; attempt++ {
+			// Wait for a slot before every request, retries included. Retries are
+			// what turn a busy minute into a stampede: each of four worker slots
+			// re-firing three times is twelve requests aimed at a five-per-minute
+			// door, and each rejection burns an attempt the job cannot get back.
+			if err := s.pacer.Wait(ctx); err != nil {
+				return "", err
+			}
 			text, policy, err := s.completeOnce(ctx, key, prompt, maxTokens)
 			if err == nil {
 				return text, nil
@@ -528,12 +694,13 @@ func (s *Summarizer) completeWithBudget(ctx context.Context, prompt string, maxT
 			// policyRetry: back off and try the SAME key again, unless this key
 			// has used up its attempts.
 			if attempt < maxAttemptsPerKey {
+				wait := ratelimit.Wait(attempt, err.Error())
 				slog.Warn("llm request failed, retrying same key",
-					"key_index", idx, "attempt", attempt, "err", err)
+					"key_index", idx, "attempt", attempt, "wait", wait, "err", err)
 				select {
 				case <-ctx.Done():
 					return "", ctx.Err()
-				case <-time.After(retryBackoff(attempt)):
+				case <-time.After(wait):
 				}
 			}
 		}
@@ -546,6 +713,13 @@ func (s *Summarizer) completeWithBudget(ctx context.Context, prompt string, maxT
 
 // completeOnce performs a single request with the given key, returning the
 // output text, the retry policy to apply on failure, and the error itself.
+//
+// Note which field actually selects the model on each provider. Anthropic takes
+// it in the request body, so LLM_MODEL decides. Gemini puts it in the URL path
+// (".../models/<model>:generateContent"), so LLM_BASE_URL decides and LLM_MODEL
+// is only the label written to llm_usage. Changing LLM_MODEL alone against
+// Gemini therefore bills you for the old model while your records name the new
+// one — change both, or the numbers you reason about are fiction.
 func (s *Summarizer) completeOnce(ctx context.Context, key, prompt string, maxTokens int) (string, retryPolicy, error) {
 	if strings.Contains(s.baseURL, "generativelanguage.googleapis.com") {
 		return s.completeGemini(ctx, key, prompt, maxTokens)
@@ -677,6 +851,104 @@ func (s *Summarizer) completeGemini(ctx context.Context, key, prompt string, max
 // estimateCost is a coarse USD estimate ($1/Mtok in, $5/Mtok out).
 func estimateCost(inTok, outTok int) float64 {
 	return float64(inTok)/1_000_000*1.0 + float64(outTok)/1_000_000*5.0
+}
+
+// repairTruncatedJSON closes a JSON object that a model left open when it hit
+// the token ceiling, discarding the entry it was midway through.
+//
+// It is a salvage, not a parser: it walks the text tracking string state and an
+// open-bracket stack, cuts back past any half-written value, drops a dangling
+// comma, and closes what is still open. Everything already complete survives.
+// Returns the input unchanged when nothing is open, so a healthy response is
+// untouched.
+//
+// It finds its own starting brace rather than trusting extractJSON, which gives
+// up and returns the whole raw string when there is no closing '}' — precisely
+// the truncated case this handles. Without that, any prose the model wrote
+// before the JSON would be walked as if it were structure.
+// It works by proposal and verification rather than by reasoning about JSON
+// grammar. Deciding analytically whether a given cut is legal means tracking
+// key-versus-value position at every nesting level — easy to get subtly wrong,
+// and a subtly wrong repair corrupts evidence instead of dropping it. Instead it
+// collects every plausible cut point, tries them longest-first, and returns the
+// first candidate the standard library agrees is valid JSON.
+func repairTruncatedJSON(s string) string {
+	if start := strings.IndexByte(s, '{'); start > 0 {
+		s = s[start:]
+	}
+	if json.Valid([]byte(s)) {
+		return s
+	}
+
+	type frame struct {
+		open byte
+		at   int
+	}
+	var stack []frame
+	// cut point -> the bracket stack open at that point, so each candidate knows
+	// what it must close.
+	type candidate struct {
+		end   int
+		stack []byte
+	}
+	var candidates []candidate
+	snapshot := func(end int) {
+		open := make([]byte, len(stack))
+		for i, f := range stack {
+			open[i] = f.open
+		}
+		candidates = append(candidates, candidate{end: end, stack: open})
+	}
+
+	inString, escaped := false, false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case ch == '\\':
+				escaped = true
+			case ch == '"':
+				inString = false
+				snapshot(i + 1) // a completed string: possibly a value, possibly a key
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{', '[':
+			stack = append(stack, frame{open: ch, at: i})
+			snapshot(i + 1)
+		case '}', ']':
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			snapshot(i + 1)
+		case ',':
+			snapshot(i + 1)
+		}
+	}
+
+	for i := len(candidates) - 1; i >= 0; i-- {
+		c := candidates[i]
+		out := strings.TrimRight(s[:c.end], " \t\r\n")
+		out = strings.TrimRight(out, ",")
+		var b strings.Builder
+		b.WriteString(out)
+		for j := len(c.stack) - 1; j >= 0; j-- {
+			if c.stack[j] == '{' {
+				b.WriteByte('}')
+			} else {
+				b.WriteByte(']')
+			}
+		}
+		if repaired := b.String(); json.Valid([]byte(repaired)) {
+			return repaired
+		}
+	}
+	return s // nothing salvageable; the caller reports the original parse error
 }
 
 // extractJSON returns the substring from the first '{' to the last '}' so we

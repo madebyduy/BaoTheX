@@ -16,6 +16,7 @@ import (
 	"repwire/internal/logging"
 	"repwire/internal/postgres"
 	"repwire/internal/process"
+	"repwire/internal/ratelimit"
 	"repwire/internal/telegram"
 )
 
@@ -47,25 +48,33 @@ func main() {
 		log.Info("telegram polling started")
 	}
 
+	// A pacer per key pool, not per process. TTS_API_KEY is its own pool with its
+	// own quota, so the audio brief must not queue behind article digests for an
+	// allowance it never draws on. When TTS_API_KEY is unset the pools are the
+	// same keys and the two pacers should be configured to match.
+	llmPacer := ratelimit.NewPacer(cfg.LLMMaxCallsPerMinute)
+	ttsPacer := ratelimit.NewPacer(cfg.TTSMaxCallsPerMinute)
+
 	handlers := &jobs.Handlers{
-		DB:             db,
-		Enqueue:        enqueue,
-		Log:            log,
-		RSS:            ingest.NewRSSFetcher(httpClient),
-		YouTube:        ingest.NewYouTubeFetcher(httpClient, cfg.YouTubeAPIKey, db),
-		PMC:            ingest.NewEuropePMCFetcher(httpClient),
-		Podcast:        ingest.NewPodcastFetcher(httpClient),
-		Summarizer:     process.NewSummarizer(cfg.LLMAPIKeys, cfg.LLMBaseURL, cfg.LLMModel, cfg.LLMDailyBudgetUSD, cfg.LLMMaxCallsPerHour, db.LLM()),
-		Telegram:       tgClient,
-		Digest:         telegram.NewDigest(db, cfg.PublicBaseURL),
-		TTS:            briefmedia.NewTTS(cfg.TTSAPIKeys, cfg.TTSModel, cfg.TTSVoice),
-		MediaDir:       cfg.MediaStorageDir,
-		PublicBaseURL:  cfg.MediaPublicBaseURL,
-		ScoreThreshold: cfg.LLMScoreThreshold,
+		DB:                db,
+		Enqueue:           enqueue,
+		Log:               log,
+		RSS:               ingest.NewRSSFetcher(httpClient),
+		YouTube:           ingest.NewYouTubeFetcher(httpClient, cfg.YouTubeAPIKey, db),
+		PMC:               ingest.NewEuropePMCFetcher(httpClient),
+		Podcast:           ingest.NewPodcastFetcher(httpClient),
+		Summarizer:        process.NewSummarizer(cfg.LLMAPIKeys, cfg.LLMBaseURL, cfg.LLMModel, cfg.LLMDailyBudgetUSD, cfg.LLMMaxCallsPerHour, db.LLM(), llmPacer),
+		Telegram:          tgClient,
+		Digest:            telegram.NewDigest(db, cfg.PublicBaseURL),
+		TTS:               briefmedia.NewTTS(cfg.TTSAPIKeys, cfg.TTSModel, cfg.TTSVoice, ttsPacer),
+		MediaDir:          cfg.MediaStorageDir,
+		PublicBaseURL:     cfg.MediaPublicBaseURL,
+		ScoreThreshold:    cfg.LLMScoreThreshold,
+		TranslateMinScore: cfg.LLMTranslateMinScore,
 	}
 
 	worker := jobs.NewWorker(hostID(), db.Job, handlers.Register(), log)
-	scheduler := jobs.NewScheduler(db, enqueue, log)
+	scheduler := jobs.NewScheduler(db, enqueue, log, cfg.LLMTranslateMinScore, cfg.LLMTranslateMaxAge, cfg.DailyPickHour)
 
 	go scheduler.Run(ctx)
 	worker.Run(ctx, cfg.WorkerConcurrency) // blocks until ctx is done

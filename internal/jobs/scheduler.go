@@ -9,6 +9,7 @@ import (
 	"repwire/internal/domain"
 	"repwire/internal/ingest"
 	"repwire/internal/postgres"
+	"repwire/internal/process"
 )
 
 // Scheduler enqueues periodic work: source fetches, digest sends, rescoring,
@@ -17,11 +18,28 @@ type Scheduler struct {
 	db      *postgres.DB
 	enqueue *Enqueuer
 	log     *slog.Logger
+
+	// translateMinScore is the floor for spending a translation call on an
+	// arriving foreign article; see postgres.IDsPendingTranslation.
+	translateMinScore float64
+	// translateMaxAge is the age past which a foreign article is abandoned
+	// rather than queued, so the backlog can never outlive the news in it.
+	translateMaxAge time.Duration
+	// dailyPickHour is the hour, Vietnam time, when the day's single hottest
+	// story is chosen and the editorial budget is committed to it.
+	dailyPickHour int
 }
 
 // NewScheduler constructs a Scheduler.
-func NewScheduler(db *postgres.DB, enqueue *Enqueuer, log *slog.Logger) *Scheduler {
-	return &Scheduler{db: db, enqueue: enqueue, log: log}
+func NewScheduler(db *postgres.DB, enqueue *Enqueuer, log *slog.Logger, translateMinScore float64, translateMaxAge time.Duration, dailyPickHour int) *Scheduler {
+	return &Scheduler{
+		db:                db,
+		enqueue:           enqueue,
+		log:               log,
+		translateMinScore: translateMinScore,
+		translateMaxAge:   translateMaxAge,
+		dailyPickHour:     dailyPickHour,
+	}
 }
 
 // Run starts all scheduling loops until ctx is done.
@@ -36,6 +54,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	go s.loop(ctx, "audio", time.Hour, s.enqueueDailyAudio)
 	go s.loop(ctx, "premium-audio-delivery", 15*time.Minute, s.enqueuePremiumAudioBriefs)
 	go s.loop(ctx, "analysis-candidates", time.Hour, s.refreshAnalysisCandidates)
+	go s.loop(ctx, "daily-pick", time.Hour, s.pickDailyHotTopic)
 	go s.loop(ctx, "reaper", 5*time.Minute, s.reapStuck)
 	go func() {
 		if err := s.recleanBodies(ctx); err != nil {
@@ -59,11 +78,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 // appointment for connected Premium members. It runs in Vietnam time because
 // the editorial schedule is fixed at 06:00 and 20:00 ICT.
 func (s *Scheduler) enqueuePremiumAudioBriefs(ctx context.Context) error {
-	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
-	if err != nil {
-		loc = time.FixedZone("ICT", 7*60*60)
-	}
-	now := time.Now().In(loc)
+	now := time.Now().In(vietnamTime())
 	editions := []struct {
 		name string
 		hour int
@@ -99,11 +114,7 @@ func (s *Scheduler) enqueueDailyAudio(ctx context.Context) error {
 	// The newsroom appointments are fixed to Vietnam time regardless of the
 	// server's deployment timezone. Because scheduler loops run immediately on
 	// startup, this also creates a missed edition when a worker starts late.
-	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
-	if err != nil {
-		loc = time.FixedZone("ICT", 7*60*60)
-	}
-	now := time.Now().In(loc)
+	now := time.Now().In(vietnamTime())
 	editions := []struct {
 		name string
 		hour int
@@ -128,45 +139,153 @@ func (s *Scheduler) enqueueDailyAudio(ctx context.Context) error {
 	return nil
 }
 
+// refreshAnalysisCandidates keeps the admin desk's ranking current. It scores
+// and stores candidates but no longer drafts anything: drafting is a single
+// deliberate decision taken once a day by pickDailyHotTopic, not a standing
+// order to write about whatever clears a bar this hour.
+//
+// It scores through the same scoreContenders as the pick. That is the point —
+// the desk must rank stories the way the newsroom actually chooses them, or the
+// number an editor reads is not the number that decided anything.
 func (s *Scheduler) refreshAnalysisCandidates(ctx context.Context) error {
-	count, err := s.db.Analysis.RefreshCandidates(ctx, 5)
+	contenders, err := s.db.Analysis.HotTopicContenders(ctx, 24*time.Hour, 60)
+	if err != nil {
+		return err
+	}
+	if len(contenders) == 0 {
+		return nil
+	}
+	count, err := s.db.Analysis.UpsertCandidates(ctx, scoreContenders(contenders))
 	if err != nil {
 		return err
 	}
 	if count > 0 {
 		s.log.Info("analysis desk refreshed", "candidates", count)
 	}
-	// Continuously draft the top proposed candidates so "Góc nhìn BaoTheX"
-	// pieces are written automatically. Each draft still lands in needs_review
-	// for an editor to approve before it is published — generation is automatic,
-	// publishing stays gated. Daily LLM budget caps the real spend.
-	return s.enqueueAnalysisDrafts(ctx, 3)
+	return nil
 }
 
-// enqueueAnalysisDrafts picks the highest-scoring proposed candidates and
-// enqueues a draft-generation job for each (deduped per cluster).
-func (s *Scheduler) enqueueAnalysisDrafts(ctx context.Context, max int) error {
-	candidates, err := s.db.Analysis.ListCandidates(ctx, "proposed", max)
+// scoreContenders runs every cluster through process.ClusterHeat. It is the one
+// place a story's heat is decided; both the desk ranking and the daily pick read
+// from it.
+func scoreContenders(contenders []domain.HotTopicCluster) []postgres.DailyPick {
+	out := make([]postgres.DailyPick, 0, len(contenders))
+	for _, c := range contenders {
+		heat, signals := process.ClusterHeat(process.ClusterHeatInput{
+			Titles:         c.Titles,
+			SourceCount:    c.SourceCount,
+			QualitySources: c.QualitySources,
+			Velocity6h:     c.Velocity6h,
+			FollowerWeight: c.FollowerWeight,
+		})
+		out = append(out, postgres.DailyPick{
+			ClusterID:   c.ClusterID,
+			Heat:        heat,
+			Controversy: signals.Controversy,
+			Action:      signals.Action,
+			Terms:       signals.Terms,
+			Cluster:     c,
+		})
+	}
+	return out
+}
+
+// pickDailyHotTopic is the newsroom's one editorial decision of the day.
+//
+// It runs hourly but does nothing until dailyPickHour, then chooses the single
+// hottest story of the last 24 hours and commits the LLM budget to it. Waiting
+// until the evening is the point: a story that broke at noon has had a full day
+// to be corroborated, argued about and followed up, and only by then can the
+// ranking tell a genuine controversy from a headline that looked loud at 9am.
+//
+// Everything before the pick is free — clustering, counting sources, matching
+// controversy words. The LLM is spent only after a winner exists, on that
+// winner alone. Roughly seven calls a day buys one properly sourced piece,
+// where the old hourly drafting loop burned the same budget failing to gather
+// three translated sources for three different clusters at once.
+func (s *Scheduler) pickDailyHotTopic(ctx context.Context) error {
+	now := time.Now().In(vietnamTime())
+	if now.Hour() < s.dailyPickHour {
+		return nil
+	}
+	if _, err := s.db.Analysis.PickedForDate(ctx, now); err == nil {
+		return nil // already decided today
+	} else if err != domain.ErrNotFound {
+		return err
+	}
+
+	contenders, err := s.db.Analysis.HotTopicContenders(ctx, 24*time.Hour, 60)
 	if err != nil {
 		return err
 	}
-	for _, c := range candidates {
-		// Claim the candidate first; if another run already took it, skip.
-		if err := s.db.Analysis.MarkDrafting(ctx, c.ClusterID); err != nil {
-			if err == domain.ErrNotFound {
-				continue
-			}
-			s.log.Error("analysis mark drafting failed", "cluster", c.ClusterID, "err", err)
-			continue
-		}
-		if err := s.enqueue.EnqueueGenerateAnalysis(ctx, c.ClusterID); err != nil {
-			_ = s.db.Analysis.MarkFailed(ctx, c.ClusterID, err)
-			s.log.Error("enqueue analysis draft failed", "cluster", c.ClusterID, "err", err)
-			continue
-		}
-		s.log.Info("analysis draft enqueued", "cluster", c.ClusterID)
+	if len(contenders) == 0 {
+		s.log.Info("daily pick skipped: no contending clusters", "date", now.Format("2006-01-02"))
+		return nil
 	}
+
+	best, ok := rankHotTopics(contenders)
+	if !ok {
+		s.log.Info("daily pick skipped: no cluster cleared the bar",
+			"date", now.Format("2006-01-02"), "contenders", len(contenders))
+		return nil
+	}
+
+	if err := s.db.Analysis.ClaimDailyPick(ctx, best, now); err != nil {
+		if err == domain.ErrNotFound {
+			return nil // another worker claimed it, or it is already published
+		}
+		return err
+	}
+	if err := s.enqueue.EnqueueGenerateAnalysis(ctx, best.ClusterID); err != nil {
+		_ = s.db.Analysis.MarkFailed(ctx, best.ClusterID, err)
+		return err
+	}
+	s.log.Info("daily hot topic picked",
+		"date", now.Format("2006-01-02"),
+		"cluster", best.ClusterID,
+		"title", best.Cluster.RepresentativeTitle,
+		"heat", best.Heat,
+		"controversy", best.Controversy,
+		"terms", best.Terms,
+		"quality_sources", best.Cluster.QualitySources,
+		"velocity_6h", best.Cluster.Velocity6h)
 	return nil
+}
+
+// minDailyPickHeat is the floor below which no story is worth the day's budget.
+// A quiet day should produce no piece rather than a forced one: two mid-quality
+// outlets reporting the same routine result clears neither the corroboration
+// nor the controversy bar, and writing about it anyway is how an opinion section
+// loses its reason to exist.
+const minDailyPickHeat = 45
+
+// rankHotTopics returns the highest-scoring contender, or ok=false when nothing
+// clears minDailyPickHeat. It shares scoreContenders with the desk refresh so
+// the two can never drift onto different scales.
+func rankHotTopics(contenders []domain.HotTopicCluster) (postgres.DailyPick, bool) {
+	var best postgres.DailyPick
+	found := false
+	for _, p := range scoreContenders(contenders) {
+		if p.Heat < minDailyPickHeat {
+			continue
+		}
+		if found && p.Heat <= best.Heat {
+			continue
+		}
+		best = p
+		found = true
+	}
+	return best, found
+}
+
+// vietnamTime returns the newsroom's timezone, falling back to a fixed offset on
+// hosts without tzdata.
+func vietnamTime() *time.Location {
+	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+	if err != nil {
+		return time.FixedZone("ICT", 7*60*60)
+	}
+	return loc
 }
 
 // recleanBodies gradually re-cleans a batch of previously-ingested article
@@ -248,7 +367,11 @@ func (s *Scheduler) clusterStories(ctx context.Context) error {
 }
 
 func (s *Scheduler) enqueueTranslations(ctx context.Context) error {
-	ids, err := s.db.Content.IDsPendingTranslation(ctx, 50)
+	// Ask for far fewer than the old 50: the hourly LLM allowance is the real
+	// ceiling, and queueing more than it can drain only builds a backlog that
+	// crowds out the editorial desk. The score and age floors keep this to
+	// stories that are both worth translating and still current.
+	ids, err := s.db.Content.IDsPendingTranslation(ctx, 12, s.translateMinScore, s.translateMaxAge)
 	if err != nil {
 		return err
 	}

@@ -335,6 +335,67 @@
   padding: 5px 9px;
   font-size: 11px;
 }
+/* The day's single pick. It is visually separated from the watch list because
+   it is the one thing an editor must actually decide on today. */
+.daily-pick {
+  margin: 20px 0;
+}
+.daily-pick-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.daily-pick-head b {
+  font-size: 15px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ember);
+}
+.daily-pick-head span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.daily-pick-empty {
+  margin: 20px 0;
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  padding: 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.candidate-card.featured {
+  border-color: var(--ember);
+  box-shadow: 0 0 0 1px var(--ember) inset;
+}
+.candidate-rest-head {
+  margin: 30px 0 12px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Matched controversy/action words: the audit trail behind the score. */
+.heat-terms {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.heat-terms b {
+  font-size: 11px;
+  color: var(--muted);
+}
+.heat-term {
+  border: 1px solid var(--ember);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--ember);
+}
 .candidate-actions {
   display: flex;
   flex-direction: column;
@@ -1212,16 +1273,38 @@
 .article-section li {
   margin: 8px 0;
 }
-.translation-banner {
+/* The route to the original on a summarised foreign story. It is deliberately
+   prominent: our summary is the news, but this is the only way to the detail,
+   and the credit belongs on the page as much as the link does. */
+.origin-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 18px;
-  margin-bottom: 24px;
+  gap: 6px;
+  padding: 18px 20px;
+  margin: 26px 0;
+  border: 1px solid var(--line);
   border-left: 3px solid var(--ember);
-  background: #251b1a;
-  color: #cad5e5;
+  border-radius: 10px;
+  background: var(--panel);
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+.origin-card:hover {
+  border-color: var(--ember);
+}
+.origin-card span {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.origin-card strong {
+  font-size: 16px;
+  color: var(--ember);
+}
+.origin-card small {
+  font-size: 12px;
   line-height: 1.5;
+  color: var(--muted);
 }
 .score-badge {
   padding: 6px 10px;

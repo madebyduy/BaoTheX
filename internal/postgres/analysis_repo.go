@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -15,87 +17,217 @@ import (
 
 type AnalysisRepo struct{ db *DB }
 
-// RefreshCandidates scores confirmed, multi-source clusters without drafting
-// anything. This is the automated filter before an editor spends LLM quota.
-func (r *AnalysisRepo) RefreshCandidates(ctx context.Context, limit int) (int64, error) {
-	if limit <= 0 {
-		limit = 5
+// UpsertCandidates records scored contenders for the admin desk without picking
+// or drafting anything.
+//
+// There used to be a second scorer here — a SQL formula built around
+// source_count*18 — while the daily pick scored with process.ClusterHeat. Both
+// wrote analysis_candidates.score, so the desk's "heat" column mixed two scales:
+// refreshed rows landed at 100-160, the day's actual pick at 59, and the chosen
+// story looked like the weakest on the board. Worse, the old formula's answers
+// were wrong in substance as well as scale: weighting raw source count above
+// source quality ranked a fixture-list announcement top and a disputed semi-final
+// fourth. One scorer now, in Go, shared by both paths.
+//
+// Rows already published, drafting or dismissed keep their score: re-ranking a
+// decision that has been acted on only confuses the record.
+func (r *AnalysisRepo) UpsertCandidates(ctx context.Context, picks []DailyPick) (int64, error) {
+	var affected int64
+	for _, p := range picks {
+		terms, err := json.Marshal(p.Terms)
+		if err != nil {
+			return affected, err
+		}
+		tag, err := r.db.Pool.Exec(ctx, `
+			INSERT INTO analysis_candidates
+			  (cluster_id, score, source_count, high_quality_sources, velocity_24h,
+			   velocity_6h, heat_score, follower_weight, controversy_score,
+			   action_score, heat_terms, status, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$2,$7,$8,$9,$10,'proposed',now())
+			ON CONFLICT (cluster_id) DO UPDATE SET
+			  score=EXCLUDED.score, source_count=EXCLUDED.source_count,
+			  high_quality_sources=EXCLUDED.high_quality_sources,
+			  velocity_24h=EXCLUDED.velocity_24h, velocity_6h=EXCLUDED.velocity_6h,
+			  heat_score=EXCLUDED.heat_score, follower_weight=EXCLUDED.follower_weight,
+			  controversy_score=EXCLUDED.controversy_score,
+			  action_score=EXCLUDED.action_score, heat_terms=EXCLUDED.heat_terms,
+			  updated_at=now()
+			WHERE analysis_candidates.status IN ('proposed','failed')`,
+			p.ClusterID, p.Heat, p.Cluster.SourceCount, p.Cluster.QualitySources,
+			p.Cluster.Velocity24h, p.Cluster.Velocity6h, p.Cluster.FollowerWeight,
+			p.Controversy, p.Action, terms)
+		if err != nil {
+			return affected, err
+		}
+		affected += tag.RowsAffected()
 	}
-	tag, err := r.db.Pool.Exec(ctx, `
-		WITH ranked AS (
-		  SELECT sc.id AS cluster_id,
-		         sc.source_count,
-		         count(DISTINCT c.source_id) FILTER (WHERE s.quality >= 4)::int AS quality_sources,
-		         count(*) FILTER (WHERE c.published_at >= now()-interval '24 hours')::int AS velocity,
-		         COALESCE(sum(c.final_score),0)::real AS heat,
-		         COALESCE((SELECT sum(t.follower_count) FROM (
-		           SELECT DISTINCT t.id,t.follower_count
-		           FROM story_cluster_items x
-		           JOIN content_topics ct ON ct.content_id=x.content_id
-		           JOIN topics t ON t.id=ct.topic_id WHERE x.cluster_id=sc.id
-		         ) t),0)::int AS followers,
-		         (sc.source_count*18
-		          + count(DISTINCT c.source_id) FILTER (WHERE s.quality >= 4)*10
-		          + LEAST(COALESCE(sum(c.final_score),0),80)*0.35
-		          + count(*) FILTER (WHERE c.published_at >= now()-interval '24 hours')*8
-		          + LEAST(COALESCE((SELECT sum(t.follower_count) FROM (
-		              SELECT DISTINCT t.id,t.follower_count
-		              FROM story_cluster_items x
-		              JOIN content_topics ct ON ct.content_id=x.content_id
-		              JOIN topics t ON t.id=ct.topic_id WHERE x.cluster_id=sc.id
-		            ) t),0),1000)*0.02)::real AS score
-		  FROM story_clusters sc
-		  JOIN story_cluster_items sci ON sci.cluster_id=sc.id
-		  JOIN content_items c ON c.id=sci.content_id AND c.status='ready'
-		  JOIN sources s ON s.id=c.source_id
-		  WHERE sc.verification_status='confirmed' AND sc.source_count >= 3
-		    AND sc.updated_at >= now()-interval '48 hours'
-		  GROUP BY sc.id
-		  HAVING count(DISTINCT c.source_id) FILTER (WHERE s.quality >= 4) >= 2
-		  ORDER BY score DESC LIMIT $1
-		)
-		INSERT INTO analysis_candidates
-		  (cluster_id,score,source_count,high_quality_sources,velocity_24h,heat_score,follower_weight)
-		SELECT cluster_id,score,source_count,quality_sources,velocity,heat,followers FROM ranked
-		ON CONFLICT (cluster_id) DO UPDATE SET
-		  score=EXCLUDED.score,source_count=EXCLUDED.source_count,
-		  high_quality_sources=EXCLUDED.high_quality_sources,
-		  velocity_24h=EXCLUDED.velocity_24h,heat_score=EXCLUDED.heat_score,
-		  follower_weight=EXCLUDED.follower_weight,updated_at=now()
-		WHERE analysis_candidates.status IN ('proposed','failed')`, limit)
+	return affected, nil
+}
+
+// HotTopicContenders returns the day's clusters with the structural signals the
+// database can compute for free, plus every headline so controversy can be
+// scored in Go (see process.ClusterHeat).
+//
+// The bar here is deliberately lower than RefreshCandidates': it accepts
+// 'verifying' clusters and two sources, because a story breaking at 8pm has not
+// had time to be corroborated five times yet, and that is exactly the story an
+// end-of-day pick should be allowed to catch.
+func (r *AnalysisRepo) HotTopicContenders(ctx context.Context, window time.Duration, limit int) ([]domain.HotTopicCluster, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 60
+	}
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT sc.id, sc.representative_title,
+		  array_agg(DISTINCT COALESCE(c.translated_title, c.title)) AS titles,
+		  count(DISTINCT c.source_id)::int AS source_count,
+		  count(DISTINCT c.source_id) FILTER (WHERE s.quality >= 4)::int AS quality_sources,
+		  count(*) FILTER (WHERE c.published_at >= now()-interval '6 hours')::int AS velocity_6h,
+		  count(*) FILTER (WHERE c.published_at >= now()-interval '24 hours')::int AS velocity_24h,
+		  count(*) FILTER (WHERE b.translation_status='ready' OR c.language='vi')::int AS translated,
+		  COALESCE((SELECT sum(t.follower_count) FROM (
+		    SELECT DISTINCT t.id, t.follower_count
+		    FROM story_cluster_items x
+		    JOIN content_topics ct ON ct.content_id=x.content_id
+		    JOIN topics t ON t.id=ct.topic_id WHERE x.cluster_id=sc.id
+		  ) t), 0)::int AS followers
+		FROM story_clusters sc
+		JOIN story_cluster_items sci ON sci.cluster_id=sc.id
+		JOIN content_items c ON c.id=sci.content_id
+		JOIN sources s ON s.id=c.source_id
+		LEFT JOIN content_bodies b ON b.content_id=c.id
+		WHERE c.type='article'
+		  AND c.status NOT IN ('failed','hidden')
+		  AND c.published_at >= now()-$1::interval
+		GROUP BY sc.id
+		HAVING count(DISTINCT c.source_id) >= 2
+		ORDER BY count(DISTINCT c.source_id) FILTER (WHERE s.quality >= 4) DESC,
+		         count(DISTINCT c.source_id) DESC
+		LIMIT $2`, window.String(), limit)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return tag.RowsAffected(), nil
+	defer rows.Close()
+	out := make([]domain.HotTopicCluster, 0)
+	for rows.Next() {
+		var c domain.HotTopicCluster
+		if err := rows.Scan(&c.ClusterID, &c.RepresentativeTitle, &c.Titles,
+			&c.SourceCount, &c.QualitySources, &c.Velocity6h, &c.Velocity24h,
+			&c.TranslatedMaterials, &c.FollowerWeight); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// PickedForDate returns the cluster already chosen for the given day, if any.
+func (r *AnalysisRepo) PickedForDate(ctx context.Context, day time.Time) (*domain.AnalysisCandidate, error) {
+	rows, err := r.db.Pool.Query(ctx, candidateSelect+`
+		WHERE ac.picked_for_date=$1::date LIMIT 1`, day.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list, err := collectCandidates(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
+		return nil, domain.ErrNotFound
+	}
+	return &list[0], nil
+}
+
+// DailyPick is the outcome of ranking, passed back down for storage. It carries
+// plain values rather than a process.HeatSignals because process already imports
+// this package; keeping the dependency one-way avoids an import cycle.
+type DailyPick struct {
+	ClusterID   int64
+	Heat        float64
+	Controversy float64
+	Action      float64
+	Terms       []string
+	Cluster     domain.HotTopicCluster
+}
+
+// ClaimDailyPick records a cluster as the day's topic and moves it straight to
+// 'drafting'. The partial unique index on picked_for_date is what makes this
+// safe: if two workers pick concurrently, one insert loses and gets ErrNotFound
+// rather than both spending the day's LLM budget on rival drafts.
+func (r *AnalysisRepo) ClaimDailyPick(ctx context.Context, p DailyPick, day time.Time) error {
+	terms, err := json.Marshal(p.Terms)
+	if err != nil {
+		return err
+	}
+	clusterID, heat, in := p.ClusterID, p.Heat, p.Cluster
+	tag, err := r.db.Pool.Exec(ctx, `
+		INSERT INTO analysis_candidates
+		  (cluster_id, score, source_count, high_quality_sources, velocity_24h,
+		   velocity_6h, heat_score, follower_weight, controversy_score,
+		   action_score, heat_terms, picked_for_date, status, selected_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$2,$7,$8,$9,$10,$11::date,'drafting',now(),now())
+		ON CONFLICT (cluster_id) DO UPDATE SET
+		  score=EXCLUDED.score, source_count=EXCLUDED.source_count,
+		  high_quality_sources=EXCLUDED.high_quality_sources,
+		  velocity_24h=EXCLUDED.velocity_24h, velocity_6h=EXCLUDED.velocity_6h,
+		  heat_score=EXCLUDED.heat_score, follower_weight=EXCLUDED.follower_weight,
+		  controversy_score=EXCLUDED.controversy_score,
+		  action_score=EXCLUDED.action_score, heat_terms=EXCLUDED.heat_terms,
+		  picked_for_date=EXCLUDED.picked_for_date, status='drafting',
+		  selected_at=now(), last_error=NULL, updated_at=now()
+		WHERE analysis_candidates.status <> 'published'`,
+		clusterID, heat, in.SourceCount, in.QualitySources, in.Velocity24h,
+		in.Velocity6h, in.FollowerWeight, p.Controversy, p.Action,
+		terms, day.Format("2006-01-02"))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+// candidateSelect is the shared projection for analysis_candidates. Callers
+// append their own WHERE/ORDER/LIMIT. collectCandidates scans exactly these
+// columns in this order — change one and you must change the other.
+const candidateSelect = `
+	SELECT ac.id,ac.cluster_id,sc.representative_title,ac.score,ac.source_count,
+	 ac.high_quality_sources,ac.velocity_24h,ac.velocity_6h,ac.heat_score,
+	 ac.controversy_score,ac.action_score,ac.heat_terms,ac.follower_weight,
+	 ac.picked_for_date,ac.status,ac.consensus,ac.conflicts,ac.unique_claims,
+	 ac.open_questions,ac.draft_content_id,ac.last_error,ac.proposed_at,
+	 ac.selected_at,ac.generated_at,ac.updated_at
+	FROM analysis_candidates ac JOIN story_clusters sc ON sc.id=ac.cluster_id`
+
+func collectCandidates(rows pgx.Rows) ([]domain.AnalysisCandidate, error) {
+	result := make([]domain.AnalysisCandidate, 0)
+	for rows.Next() {
+		var c domain.AnalysisCandidate
+		if err := rows.Scan(&c.ID, &c.ClusterID, &c.RepresentativeTitle, &c.Score, &c.SourceCount,
+			&c.HighQualitySources, &c.Velocity24h, &c.Velocity6h, &c.HeatScore,
+			&c.ControversyScore, &c.ActionScore, &c.HeatTerms, &c.FollowerWeight,
+			&c.PickedForDate, &c.Status, &c.Consensus, &c.Conflicts, &c.UniqueClaims,
+			&c.OpenQuestions, &c.DraftContentID, &c.LastError, &c.ProposedAt,
+			&c.SelectedAt, &c.GeneratedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, c)
+	}
+	return result, rows.Err()
 }
 
 func (r *AnalysisRepo) ListCandidates(ctx context.Context, status string, limit int) ([]domain.AnalysisCandidate, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	rows, err := r.db.Pool.Query(ctx, `
-		SELECT ac.id,ac.cluster_id,sc.representative_title,ac.score,ac.source_count,
-		 ac.high_quality_sources,ac.velocity_24h,ac.heat_score,ac.follower_weight,
-		 ac.status,ac.consensus,ac.conflicts,ac.unique_claims,ac.open_questions,
-		 ac.draft_content_id,ac.last_error,ac.proposed_at,ac.selected_at,ac.generated_at,ac.updated_at
-		FROM analysis_candidates ac JOIN story_clusters sc ON sc.id=ac.cluster_id
+	rows, err := r.db.Pool.Query(ctx, candidateSelect+`
 		WHERE ($1='' OR ac.status=$1) ORDER BY ac.score DESC,ac.updated_at DESC LIMIT $2`, status, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := make([]domain.AnalysisCandidate, 0)
-	for rows.Next() {
-		var c domain.AnalysisCandidate
-		if err := rows.Scan(&c.ID, &c.ClusterID, &c.RepresentativeTitle, &c.Score, &c.SourceCount,
-			&c.HighQualitySources, &c.Velocity24h, &c.HeatScore, &c.FollowerWeight,
-			&c.Status, &c.Consensus, &c.Conflicts, &c.UniqueClaims, &c.OpenQuestions,
-			&c.DraftContentID, &c.LastError, &c.ProposedAt, &c.SelectedAt, &c.GeneratedAt, &c.UpdatedAt); err != nil {
-			return nil, err
-		}
-		result = append(result, c)
-	}
-	return result, rows.Err()
+	return collectCandidates(rows)
 }
 
 func (r *AnalysisRepo) GetMaterials(ctx context.Context, clusterID int64) ([]domain.AnalysisMaterial, error) {
@@ -184,9 +316,14 @@ func (r *AnalysisRepo) CreateDraft(ctx context.Context, clusterID int64, claims 
 			original_body=$2,vietnamese_body=$2,translation_status='ready',translated_at=now(),updated_at=now()`, contentID, draft.Body); err != nil {
 			return err
 		}
+		// $1::bigint, not bare $1. A parameter in a SELECT list has no column to
+		// infer its type from, so Postgres assumes text and the insert fails with
+		// "column content_id is of type bigint but expression is of type text".
+		// This sat here unreached for as long as the analysis job died earlier;
+		// it only surfaced once the desk got far enough to write a draft.
 		if _, err := tx.Exec(ctx, `INSERT INTO content_topics(content_id,topic_id,confidence,is_primary)
-			SELECT DISTINCT $1,ct.topic_id,0.9,false FROM story_cluster_items sci
-			JOIN content_topics ct ON ct.content_id=sci.content_id WHERE sci.cluster_id=$2
+			SELECT DISTINCT $1::bigint,ct.topic_id,0.9,false FROM story_cluster_items sci
+			JOIN content_topics ct ON ct.content_id=sci.content_id WHERE sci.cluster_id=$2::bigint
 			ON CONFLICT(content_id,topic_id) DO NOTHING`, contentID, clusterID); err != nil {
 			return err
 		}

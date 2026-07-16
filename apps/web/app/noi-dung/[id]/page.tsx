@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { api, type ContentBody, type Item, typeLabel } from "../../lib";
 import { Footer } from "../../ui";
-import { LikeButton, SaveButton, ShareBar, TranslateButton } from "../../action-buttons";
+import { LikeButton, SaveButton, ShareBar } from "../../action-buttons";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://baothex.vn";
 // generateMetadata and the page both need the article. Using the SAME revalidate
@@ -88,15 +88,26 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   if (!data.item) notFound();
   const item = data.item;
   const body = data.body;
-  const translated = body?.vietnamese_body?.trim();
-  const sourceText =
-    translated ||
-    body?.original_body ||
-    data.research?.abstract ||
-    data.video?.description ||
-    item.excerpt ||
-    "";
-  const isEnglish = Boolean(body?.original_body && !translated && body.original_language !== "vi");
+  // A foreign article is summarised, never reproduced.
+  //
+  // This page used to fall back to body.original_body when no translation
+  // existed, which served readers the verbatim English article from Reuters or
+  // the Guardian; when a translation did exist it served a full Vietnamese copy
+  // instead. Both are republishing someone else's reporting. What we publish now
+  // is our own headline, key points and summary, plus a prominent link to the
+  // original — the standard aggregation posture, and the only one that is ours
+  // to publish.
+  //
+  // The winning cluster of the day still gets a full translation stored, purely
+  // as raw material for the Góc nhìn analysis. isForeign keeps it off the page
+  // regardless.
+  const isForeign =
+    (item.language && item.language !== "vi") ||
+    Boolean(body?.original_language && body.original_language !== "vi");
+  const ownText = data.research?.abstract || data.video?.description || "";
+  const sourceText = isForeign
+    ? ownText
+    : ownText || body?.vietnamese_body?.trim() || body?.original_body || item.excerpt || "";
   // Chỉ bài báo kết quả có tỷ số ngay trong tiêu đề mới được gắn badge.
   // Video thường chứa timecode như 0:00, 1:35 nên tuyệt đối không suy diễn
   // các con số trong mô tả thành tỷ số trận đấu.
@@ -217,43 +228,47 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
                 </div>
               </a>
             ) : null}
-            {isEnglish ? (
-              <div className="translation-banner">
-                <b>Bài gốc đang ở tiếng Anh</b>
-                <span>
-                  BaoTheX chỉ dịch nguồn quốc tế; nguồn tiếng Việt được giữ nguyên để tiết kiệm
-                  quota.
-                </span>
-                <TranslateButton contentId={item.id} />
-              </div>
-            ) : null}
-            {translated ? (
-              <div className="translation-badge">BẢN TIẾNG VIỆT ĐÃ ĐƯỢC BIÊN TẬP</div>
-            ) : null}
             <section className="article-content">
               {item.summary ? (
                 <div className="article-summary">
-                  <span>TÓM TẮT NHANH</span>
-                  <p>{item.summary}</p>
+                  <span>{isForeign ? "TÓM TẮT CỦA BAOTHEX" : "TÓM TẮT NHANH"}</span>
+                  {/* A foreign digest is written as several paragraphs and is the
+                      whole article — render the breaks. A native summary is one
+                      short blurb above the real body, so it stays a single p. */}
+                  {isForeign ? (
+                    splitParagraphs(item.summary).map((p, i) => <p key={`${i}-${p.slice(0, 12)}`}>{p}</p>)
+                  ) : (
+                    <p>{item.summary}</p>
+                  )}
                 </div>
               ) : null}
-              <section className="article-section article-main-copy">
-                <h2>
-                  {item.type === "video"
-                    ? "Giới thiệu video"
-                    : translated
-                      ? "Nội dung bài viết"
-                      : "Nội dung nguồn"}
-                </h2>
-                <ReadableText text={sourceText} />
-                {item.type === "article" && !body?.original_body && !data.research?.abstract ? (
-                  <div className="notice">
-                    Nguồn RSS hiện chỉ cung cấp phần tóm tắt. Mở bài gốc để đọc toàn văn; hệ thống
-                    sẽ hiển thị toàn văn ngay khi nguồn cho phép cung cấp nội dung đầy đủ.
-                  </div>
-                ) : null}
-              </section>
-              {item.key_points?.length ? (
+              {/* Key points come first for a foreign story: with no body to
+                  follow, they are the article rather than a sidebar to it. */}
+              {isForeign && item.key_points?.length ? (
+                <ArticleList title="Những điểm chính" items={item.key_points} featured />
+              ) : null}
+              {sourceText ? (
+                <section className="article-section article-main-copy">
+                  <h2>{item.type === "video" ? "Giới thiệu video" : "Nội dung bài viết"}</h2>
+                  <ReadableText text={sourceText} />
+                </section>
+              ) : null}
+              {isForeign && externalSource ? (
+                <a
+                  className="origin-card"
+                  href={externalSource}
+                  target="_blank"
+                  rel="noreferrer nofollow"
+                >
+                  <span>BÀI GỐC</span>
+                  <strong>Đọc toàn văn trên {item.source_name || "nguồn gốc"} ↗</strong>
+                  <small>
+                    BaoTheX tóm tắt và biên tập bằng tiếng Việt. Bản quyền nội dung gốc thuộc về{" "}
+                    {item.source_name || "nguồn phát hành"}.
+                  </small>
+                </a>
+              ) : null}
+              {!isForeign && item.key_points?.length ? (
                 <ArticleList title="Điểm chính" items={item.key_points} featured />
               ) : null}
               {data.research?.breakdown ? (
@@ -320,6 +335,16 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       <Footer />
     </>
   );
+}
+
+// splitParagraphs breaks digest prose on blank lines. Unlike sanitizeArticleText
+// it strips nothing: this text is ours, so there is no publisher boilerplate to
+// filter out of it.
+function splitParagraphs(text: string) {
+  return text
+    .split(/\n{2,}|\r\n\r\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
 }
 
 function ReadableText({ text }: { text: string }) {

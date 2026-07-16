@@ -227,22 +227,8 @@ export function ShareBar({ title }: { title: string }) {
   );
 }
 
-export function TranslateButton({ contentId }: { contentId: number }) {
-  const [status, setStatus] = useState("");
-  async function translate() {
-    setStatus("Đang dịch…");
-    const response = await fetch(`${API}/api/v1/content/${contentId}/translate`, {
-      method: "POST",
-    });
-    setStatus(
-      response.ok
-        ? "Đã xếp hàng dịch — tải lại sau ít phút"
-        : "Chưa thể dịch: hãy cấu hình LLM_API_KEY",
-    );
-  }
-  return (
-    <button className="btn light translate-button" onClick={translate}>
-      {status || "Dịch bài này sang tiếng Việt"}
-    </button>
-  );
-}
+// TranslateButton is gone: foreign articles are digested into Vietnamese on
+// ingest and never rendered as a full translation, so there is nothing for a
+// reader to request. The POST /content/{id}/translate endpoint it called still
+// exists and still works — it now queues a digest — which is worth keeping for
+// re-processing a story by hand.

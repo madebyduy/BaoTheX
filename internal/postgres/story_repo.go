@@ -9,9 +9,39 @@ import (
 	"repwire/internal/domain"
 )
 
-// ClusterContent attaches an item to the closest recent story, or creates a
-// new one. Titles must be reader-facing Vietnamese before this is called for
-// foreign content.
+// Clustering thresholds. titleSimilarityFloor is pg_trgm similarity on the
+// reader-facing title; sharedEntityFloor is how many entities two pieces must
+// have in common before they are called the same story on that evidence alone.
+//
+// Two shared entities, not one: every Manchester United article in a week
+// shares "Manchester United", so a floor of one would collapse a club's entire
+// news cycle into a single cluster. "Man Utd + Ten Hag" appearing together is a
+// specific event; "Man Utd" alone is a beat.
+const (
+	titleSimilarityFloor = 0.32
+	sharedEntityFloor    = 2
+	// entityMatchWindow is tighter than the title window because entity overlap
+	// is the weaker evidence: coverage of one event lands within a couple of
+	// days, while a rewritten headline stays recognisable for longer.
+	entityMatchWindow = "2 days"
+	titleMatchWindow  = "4 days"
+)
+
+// ClusterContent attaches an item to the closest recent story, or creates a new
+// one.
+//
+// Two pieces are the same story if their titles look alike OR they share enough
+// entities. The second path is what makes this work at all across languages:
+// trigram similarity between "Man Utd sack their manager" and "MU sa thải HLV"
+// is essentially zero, so title matching alone had merged English with
+// Vietnamese coverage exactly once across the entire database, and left 88% of
+// clusters holding a single article. Entities do not care which language spelled
+// them — "Messi" is "Messi" either way — so they carry the join that text
+// similarity cannot.
+//
+// This only pays off with a populated entity table: see migration 0023. With
+// seven strength-training entities it degrades silently to title matching,
+// which is exactly the state it was written to escape.
 func (r *ContentRepo) ClusterContent(ctx context.Context, contentID int64, title string) error {
 	return r.db.WithTx(ctx, func(tx pgx.Tx) error {
 		var existing int64
@@ -24,16 +54,38 @@ func (r *ContentRepo) ClusterContent(ctx context.Context, contentID int64, title
 		var clusterID int64
 		var similarity float64
 		err := tx.QueryRow(ctx, `
-			SELECT sci.cluster_id,
-			       similarity(COALESCE(c.translated_title,c.title), $2) AS sim
-			FROM content_items c
-			JOIN story_cluster_items sci ON sci.content_id=c.id
-			WHERE c.id <> $1
-			  AND c.type=(SELECT type FROM content_items WHERE id=$1)
-			  AND c.published_at > COALESCE((SELECT published_at FROM content_items WHERE id=$1),now()) - interval '4 days'
-			  AND c.published_at < COALESCE((SELECT published_at FROM content_items WHERE id=$1),now()) + interval '4 days'
-			  AND similarity(COALESCE(c.translated_title,c.title), $2) >= 0.32
-			ORDER BY sim DESC LIMIT 1`, contentID, title).Scan(&clusterID, &similarity)
+			WITH me AS (
+			  SELECT id, type, COALESCE(published_at, now()) AS pub
+			  FROM content_items WHERE id=$1
+			),
+			mine AS (
+			  SELECT entity_id FROM content_entities WHERE content_id=$1
+			),
+			candidates AS (
+			  SELECT sci.cluster_id,
+			         max(similarity(COALESCE(c.translated_title,c.title), $2)) AS sim,
+			         max(shared.n) AS shared,
+			         min(abs(extract(epoch FROM c.published_at - me.pub))) AS gap
+			  FROM content_items c
+			  JOIN story_cluster_items sci ON sci.content_id=c.id
+			  CROSS JOIN me
+			  CROSS JOIN LATERAL (
+			    SELECT count(*)::int AS n FROM content_entities ce
+			    WHERE ce.content_id=c.id AND ce.entity_id IN (SELECT entity_id FROM mine)
+			  ) shared
+			  WHERE c.id <> me.id
+			    AND c.type = me.type
+			    AND c.published_at > me.pub - $4::interval
+			    AND c.published_at < me.pub + $4::interval
+			  GROUP BY sci.cluster_id
+			)
+			SELECT cluster_id, sim FROM candidates
+			WHERE sim >= $3
+			   OR (shared >= $5 AND gap <= extract(epoch FROM $6::interval))
+			ORDER BY (shared * 0.25 + sim) DESC, sim DESC
+			LIMIT 1`,
+			contentID, title, titleSimilarityFloor, titleMatchWindow,
+			sharedEntityFloor, entityMatchWindow).Scan(&clusterID, &similarity)
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = tx.QueryRow(ctx, `INSERT INTO story_clusters
 				(representative_title,primary_content_id) VALUES ($1,$2) RETURNING id`, title, contentID).Scan(&clusterID)
