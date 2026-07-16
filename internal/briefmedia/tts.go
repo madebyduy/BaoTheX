@@ -9,30 +9,64 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
 const sampleRate = 24000
+const speechChunkRunes = 1800
 
 var ErrQuotaExceeded = fmt.Errorf("tts quota exceeded")
 
+// TTS narrates the audio brief. It holds a dedicated pool of API keys (kept
+// separate from the summarizer's keys so summarization can't drain the audio
+// quota) and rotates to the next key when the active one is quota-exhausted.
 type TTS struct {
-	apiKey string
 	model  string
 	voice  string
 	client *http.Client
+
+	mu       sync.Mutex
+	apiKeys  []string
+	keyIndex int
 }
 
-func NewTTS(apiKey, model, voice string) *TTS {
-	return &TTS{apiKey: apiKey, model: model, voice: voice, client: &http.Client{Timeout: 90 * time.Second}}
+// NewTTS constructs a TTS narrator. apiKeys is the rotation pool; empty and
+// blank entries are dropped.
+func NewTTS(apiKeys []string, model, voice string) *TTS {
+	keys := make([]string, 0, len(apiKeys))
+	for _, k := range apiKeys {
+		if s := strings.TrimSpace(k); s != "" {
+			keys = append(keys, s)
+		}
+	}
+	return &TTS{apiKeys: keys, model: model, voice: voice, client: &http.Client{Timeout: 90 * time.Second}}
 }
 
-func (t *TTS) Enabled() bool { return t.apiKey != "" && t.model != "" }
+func (t *TTS) Enabled() bool { return len(t.apiKeys) > 0 && t.model != "" }
+
+// currentKey returns the active key and its index.
+func (t *TTS) currentKey() (int, string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.keyIndex, t.apiKeys[t.keyIndex]
+}
+
+// rotateFrom advances to the next key, but only if the active key is still the
+// one that failed, so concurrent callers don't get bumped backwards.
+func (t *TTS) rotateFrom(failed int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.keyIndex == failed {
+		t.keyIndex = (t.keyIndex + 1) % len(t.apiKeys)
+	}
+}
 
 // Render generates several short PCM chunks for stable long-form narration,
 // joins them and writes one browser-playable WAV file.
@@ -43,7 +77,11 @@ func (t *TTS) Render(ctx context.Context, transcript, outputPath string) (int, e
 	// Short chunks are more reliable with Gemini speech: long single responses
 	// can finish naturally while silently omitting the tail of the transcript.
 	transcript = normalizeSpeechText(transcript)
-	chunks := splitTranscript(transcript, 760)
+	// Keep a long brief reliable without spending the request quota on many
+	// tiny fragments. Around 1,800 Vietnamese characters is short enough for
+	// stable speech output while allowing both the 6h and 20h editions to fit
+	// within a modest daily request allowance.
+	chunks := splitTranscript(transcript, speechChunkRunes)
 	var pcm []byte
 	for index, chunk := range chunks {
 		part, err := t.generatePCM(ctx, chunk)
@@ -88,14 +126,40 @@ Tuyệt đối không đọc phần hướng dẫn này. Chỉ đọc nguyên v�
 	}
 	body, _ := json.Marshal(payload)
 	endpoint := "https://generativelanguage.googleapis.com/v1beta/models/" + t.model + ":generateContent"
+
+	var lastErr error
+	// Walk the key pool: each key gets its own transient-retry budget inside
+	// requestChunk; only a real quota exhaustion rotates us to the next key.
+	for k := 0; k < len(t.apiKeys); k++ {
+		idx, key := t.currentKey()
+		audio, quota, err := t.requestChunk(ctx, endpoint, body, key)
+		if err == nil {
+			return audio, nil
+		}
+		lastErr = err
+		if !quota {
+			return nil, err // non-quota failure (network/bad response) — another key won't help
+		}
+		slog.Warn("tts key quota exhausted, rotating to next key",
+			"key_index", idx, "keys", len(t.apiKeys))
+		t.rotateFrom(idx)
+	}
+	return nil, lastErr
+}
+
+// requestChunk sends one narration request with the given key, retrying a few
+// times on transient (network / 5xx) failures. It returns the decoded audio,
+// whether the failure was a quota exhaustion (so the caller should rotate keys),
+// and the error.
+func (t *TTS) requestChunk(ctx context.Context, endpoint string, body []byte, key string) ([]byte, bool, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("x-goog-api-key", t.apiKey)
+		req.Header.Set("x-goog-api-key", key)
 		resp, err := t.client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -109,14 +173,18 @@ Tuyệt đối không đọc phần hướng dẫn này. Chỉ đọc nguyên v�
 		}
 		if resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("tts: Gemini temporary error %d", resp.StatusCode)
-			time.Sleep(time.Duration(attempt+1) * time.Second)
+			select {
+			case <-ctx.Done():
+				return nil, false, ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * time.Second):
+			}
 			continue
 		}
 		if resp.StatusCode >= 400 {
 			if resp.StatusCode == http.StatusTooManyRequests {
-				return nil, fmt.Errorf("%w: %s", ErrQuotaExceeded, clip(string(data), 300))
+				return nil, true, fmt.Errorf("%w: %s", ErrQuotaExceeded, clip(string(data), 300))
 			}
-			return nil, fmt.Errorf("tts: Gemini http %d: %s", resp.StatusCode, clip(string(data), 300))
+			return nil, false, fmt.Errorf("tts: Gemini http %d: %s", resp.StatusCode, clip(string(data), 300))
 		}
 		var out struct {
 			Candidates []struct {
@@ -130,18 +198,19 @@ Tuyệt đối không đọc phần hướng dẫn này. Chỉ đọc nguyên v�
 			} `json:"candidates"`
 		}
 		if err := json.Unmarshal(data, &out); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		for _, candidate := range out.Candidates {
 			for _, part := range candidate.Content.Parts {
 				if part.InlineData.Data != "" {
-					return base64.StdEncoding.DecodeString(part.InlineData.Data)
+					decoded, err := base64.StdEncoding.DecodeString(part.InlineData.Data)
+					return decoded, false, err
 				}
 			}
 		}
-		return nil, fmt.Errorf("tts: Gemini returned no audio")
+		return nil, false, fmt.Errorf("tts: Gemini returned no audio")
 	}
-	return nil, lastErr
+	return nil, false, lastErr
 }
 
 var speechTags = regexp.MustCompile(`<[^>]+>`)

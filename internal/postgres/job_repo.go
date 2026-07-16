@@ -56,6 +56,20 @@ func (r *JobRepo) Enqueue(ctx context.Context, kind string, payload any, opts En
 	return err
 }
 
+// WakePendingByDedup makes an explicitly retried queued job runnable now.
+// It never touches a running job, so an editor cannot start two copies of the
+// same analysis concurrently.
+func (r *JobRepo) WakePendingByDedup(ctx context.Context, dedupKey string) (bool, error) {
+	tag, err := r.db.Pool.Exec(ctx, `
+		UPDATE jobs SET run_at=now(), attempts=0, last_error=NULL,
+		       locked_by=NULL, locked_at=NULL, finished_at=NULL
+		WHERE dedup_key=$1 AND status='pending'`, dedupKey)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 const dequeueSQL = `
 UPDATE jobs SET
     status    = 'running',

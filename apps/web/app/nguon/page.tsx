@@ -27,8 +27,11 @@ export default async function Page() {
               <span className="tag">{source.kind || "Nguồn nội dung"}</span>
               <h3>{source.name}</h3>
               <p>
-                Nguồn {source.default_lang === "vi" ? "tiếng Việt" : "quốc tế"} được BaoTheX theo
-                dõi và phân loại.
+                {source.homepage_url
+                  ? source.homepage_url.replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+                  : "Nguồn nội dung"}
+                {" · "}
+                {source.default_lang === "vi" ? "Tiếng Việt" : "Quốc tế"}
               </p>
               <div className="meta">
                 Độ tin cậy {"★".repeat(Math.max(1, Math.min(5, source.quality || 3)))} · Xem bài →

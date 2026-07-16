@@ -87,19 +87,26 @@ func (e *Enqueuer) EnqueueGenerateAudio(ctx context.Context, day time.Time, edit
 	})
 }
 
-func (e *Enqueuer) EnqueueGenerateAnalysis(ctx context.Context, clusterID int64) error {
-	return e.repo.Enqueue(ctx, domain.JobGenerateAnalysis, domain.AnalysisPayload{ClusterID: clusterID}, postgres.EnqueueOpts{
-		DedupKey:    fmt.Sprintf("cluster-analysis:%d", clusterID),
+func (e *Enqueuer) EnqueueSendPremiumBrief(ctx context.Context, userID int64, day time.Time, edition string) error {
+	date := day.Format("2006-01-02")
+	return e.repo.Enqueue(ctx, domain.JobSendPremiumBrief, domain.PremiumBriefPayload{UserID: userID, Date: date, Edition: edition}, postgres.EnqueueOpts{
+		DedupKey:    fmt.Sprintf("premium-audio:%d:%s:%s", userID, edition, date),
 		Priority:    3,
 		MaxAttempts: 3,
 	})
 }
 
-func (e *Enqueuer) EnqueueGenerateVideo(ctx context.Context, day time.Time) error {
-	date := day.Format("2006-01-02")
-	return e.repo.Enqueue(ctx, domain.JobGenerateVideo, domain.BriefPayload{Date: date}, postgres.EnqueueOpts{
-		DedupKey: "video-brief:" + date,
-		Priority: 2,
+func (e *Enqueuer) EnqueueGenerateAnalysis(ctx context.Context, clusterID int64) error {
+	dedupKey := fmt.Sprintf("cluster-analysis:%d", clusterID)
+	if woke, err := e.repo.WakePendingByDedup(ctx, dedupKey); err != nil {
+		return err
+	} else if woke {
+		return nil
+	}
+	return e.repo.Enqueue(ctx, domain.JobGenerateAnalysis, domain.AnalysisPayload{ClusterID: clusterID}, postgres.EnqueueOpts{
+		DedupKey:    dedupKey,
+		Priority:    3,
+		MaxAttempts: 3,
 	})
 }
 

@@ -33,7 +33,6 @@ type Handlers struct {
 	Telegram      *telegram.Client
 	Digest        *telegram.Digest
 	TTS           *briefmedia.TTS
-	VideoRenderer *briefmedia.VideoRenderer
 	MediaDir      string
 	PublicBaseURL string
 
@@ -55,8 +54,8 @@ func (h *Handlers) Register() map[string]HandlerFunc {
 		domain.JobSendDaily:        h.handleSendDaily,
 		domain.JobSendWeekly:       h.handleSendWeekly,
 		domain.JobGenerateAudio:    h.handleGenerateAudio,
-		domain.JobGenerateVideo:    h.handleGenerateVideo,
 		domain.JobGenerateAnalysis: h.handleGenerateAnalysis,
+		domain.JobSendPremiumBrief: h.handleSendPremiumBrief,
 	}
 }
 
@@ -68,17 +67,20 @@ func (h *Handlers) handleTranslate(ctx context.Context, j *domain.Job) error {
 	if h.Summarizer == nil || !h.Summarizer.Enabled() {
 		return fmt.Errorf("translator: LLM_API_KEY not configured")
 	}
-	if ok, err := h.Summarizer.BudgetOK(ctx); err != nil {
-		return err
-	} else if !ok {
-		return process.ErrBudgetExceeded
-	}
 	body, err := h.DB.Content.GetBody(ctx, p.ContentID)
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if ingest.BlockedArticleText(body.OriginalBody) {
+		return h.DB.Content.QuarantineBlockedArticle(ctx, p.ContentID)
+	}
+	if ok, err := h.Summarizer.BudgetOK(ctx); err != nil {
+		return err
+	} else if !ok {
+		return process.ErrBudgetExceeded
 	}
 	item, err := h.DB.Content.Get(ctx, p.ContentID)
 	if err != nil {
@@ -174,6 +176,11 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 		return err
 	}
 	_ = h.DB.Content.SetStatus(ctx, item.ID, domain.StatusProcessing)
+	if item.Type == domain.ContentArticle {
+		if body, bodyErr := h.DB.Content.GetBody(ctx, item.ID); bodyErr == nil && ingest.BlockedArticleText(body.OriginalBody) {
+			return h.DB.Content.QuarantineBlockedArticle(ctx, item.ID)
+		}
+	}
 
 	// Gather extra text (abstract / video description) to aid classification.
 	extraText := h.extraText(ctx, item)
@@ -296,6 +303,9 @@ func (h *Handlers) summarizeArticle(ctx context.Context, item *domain.ContentIte
 	body := deref(item.Excerpt)
 	if stored, err := h.DB.Content.GetBody(ctx, item.ID); err == nil && strings.TrimSpace(stored.OriginalBody) != "" {
 		body = stored.OriginalBody
+	}
+	if ingest.BlockedArticleText(body) {
+		return h.DB.Content.QuarantineBlockedArticle(ctx, item.ID)
 	}
 	if len(strings.Fields(body)) < 120 {
 		return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)

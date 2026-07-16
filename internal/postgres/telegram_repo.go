@@ -82,11 +82,11 @@ func (r *TelegramRepo) GetPrefs(ctx context.Context, userID int64) (*domain.Noti
 	var days []int16
 	var types []string
 	err := r.db.Pool.QueryRow(ctx, `
-		SELECT daily_enabled, daily_hour, daily_days, daily_max_items, weekly_research, weekly_dow,
-		       follow_alerts, highlights_only, quiet_start, quiet_end, content_types::text[]
+		SELECT daily_enabled, audio_enabled, evening_brief_enabled, daily_hour, daily_days, daily_max_items, weekly_research, weekly_dow,
+		       follow_alerts, highlights_only, quiet_start, quiet_end, content_types::text[], feed_following_only
 		FROM notification_preferences WHERE user_id=$1`, userID).
-		Scan(&p.DailyEnabled, &p.DailyHour, &days, &p.DailyMaxItems, &p.WeeklyResearch, &p.WeeklyDOW,
-			&p.FollowAlerts, &p.HighlightsOnly, &p.QuietStart, &p.QuietEnd, &types)
+		Scan(&p.DailyEnabled, &p.AudioEnabled, &p.EveningBriefEnabled, &p.DailyHour, &days, &p.DailyMaxItems, &p.WeeklyResearch, &p.WeeklyDOW,
+			&p.FollowAlerts, &p.HighlightsOnly, &p.QuietStart, &p.QuietEnd, &types, &p.FeedFollowingOnly)
 	if errors.Is(err, pgx.ErrNoRows) {
 		def := domain.DefaultNotificationPreferences(userID)
 		if _, e := r.db.Pool.Exec(ctx, `INSERT INTO notification_preferences (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, userID); e != nil {
@@ -113,19 +113,42 @@ func (r *TelegramRepo) UpdatePrefs(ctx context.Context, p *domain.NotificationPr
 	}
 	_, err := r.db.Pool.Exec(ctx, `
 		INSERT INTO notification_preferences
-			(user_id, daily_enabled, daily_hour, daily_days, daily_max_items, weekly_research,
-			 weekly_dow, follow_alerts, highlights_only, quiet_start, quiet_end, content_types)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::content_type[])
+			(user_id, daily_enabled, audio_enabled, evening_brief_enabled, daily_hour, daily_days, daily_max_items, weekly_research,
+			 weekly_dow, follow_alerts, highlights_only, quiet_start, quiet_end, content_types, feed_following_only)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::content_type[],$15)
 		ON CONFLICT (user_id) DO UPDATE SET
 			daily_enabled=EXCLUDED.daily_enabled, daily_hour=EXCLUDED.daily_hour,
+			audio_enabled=EXCLUDED.audio_enabled,
+			evening_brief_enabled=EXCLUDED.evening_brief_enabled,
 			daily_days=EXCLUDED.daily_days, daily_max_items=EXCLUDED.daily_max_items,
 			weekly_research=EXCLUDED.weekly_research, weekly_dow=EXCLUDED.weekly_dow,
 			follow_alerts=EXCLUDED.follow_alerts, highlights_only=EXCLUDED.highlights_only,
 			quiet_start=EXCLUDED.quiet_start, quiet_end=EXCLUDED.quiet_end,
-			content_types=EXCLUDED.content_types`,
-		p.UserID, p.DailyEnabled, p.DailyHour, int16sFromInts(p.DailyDays), p.DailyMaxItems,
-		p.WeeklyResearch, p.WeeklyDOW, p.FollowAlerts, p.HighlightsOnly, p.QuietStart, p.QuietEnd, types)
+			content_types=EXCLUDED.content_types,
+			feed_following_only=EXCLUDED.feed_following_only`,
+		p.UserID, p.DailyEnabled, p.AudioEnabled, p.EveningBriefEnabled, p.DailyHour, int16sFromInts(p.DailyDays), p.DailyMaxItems,
+		p.WeeklyResearch, p.WeeklyDOW, p.FollowAlerts, p.HighlightsOnly, p.QuietStart, p.QuietEnd, types, p.FeedFollowingOnly)
 	return err
+}
+
+// PremiumUsersForAudioBrief returns linked Premium users who asked for this
+// fixed edition. Morning follows DailyEnabled; evening has its own switch.
+func (r *TelegramRepo) PremiumUsersForAudioBrief(ctx context.Context, edition string) ([]int64, error) {
+	condition := "p.daily_enabled"
+	if edition == "evening" {
+		condition = "p.evening_brief_enabled"
+	}
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT u.id FROM users u
+		JOIN user_subscriptions sub ON sub.user_id=u.id
+		JOIN telegram_connections tc ON tc.user_id=u.id
+		JOIN notification_preferences p ON p.user_id=u.id
+		WHERE sub.status='active' AND sub.current_period_end > now() AND p.audio_enabled AND `+condition)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanIDs(rows)
 }
 
 // SetDailyEnabled toggles daily digests (used by /pause, /resume, and 403 handling).

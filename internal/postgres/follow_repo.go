@@ -11,6 +11,17 @@ import (
 // FollowRepo persists topic/entity/source follows and topic mutes.
 type FollowRepo struct{ db *DB }
 
+// HasFeedTopics reports whether strict feed mode has at least one usable topic.
+func (r *FollowRepo) HasFeedTopics(ctx context.Context, userID int64) (bool, error) {
+	var ok bool
+	err := r.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM user_topic_follows
+			WHERE user_id=$1 AND in_feed
+		)`, userID).Scan(&ok)
+	return ok, err
+}
+
 // FollowTopic follows a topic (idempotent) and bumps the follower count.
 func (r *FollowRepo) FollowTopic(ctx context.Context, userID, topicID int64) error {
 	return r.db.WithTx(ctx, func(tx pgx.Tx) error {

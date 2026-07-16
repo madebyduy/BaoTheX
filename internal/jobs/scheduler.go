@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"repwire/internal/domain"
@@ -31,32 +32,97 @@ func (s *Scheduler) Run(ctx context.Context) {
 	go s.loop(ctx, "translate", 10*time.Minute, s.enqueueTranslations)
 	go s.loop(ctx, "cluster", 15*time.Minute, s.clusterStories)
 	go s.loop(ctx, "media", time.Hour, s.backfillMedia)
+	go s.loop(ctx, "reclean", time.Hour, s.recleanBodies)
 	go s.loop(ctx, "audio", time.Hour, s.enqueueDailyAudio)
+	go s.loop(ctx, "premium-audio-delivery", 15*time.Minute, s.enqueuePremiumAudioBriefs)
 	go s.loop(ctx, "analysis-candidates", time.Hour, s.refreshAnalysisCandidates)
 	go s.loop(ctx, "reaper", 5*time.Minute, s.reapStuck)
+	go func() {
+		if err := s.recleanBodies(ctx); err != nil {
+			s.log.Error("initial body reclean failed", "err", err)
+		}
+	}()
+	// Run the audio check explicitly at startup as well as inside its regular
+	// loop. This makes a late-starting local worker catch up with the 06:00/20:00
+	// edition instead of waiting for the first hourly tick.
+	go func() {
+		if err := s.enqueueDailyAudio(ctx); err != nil {
+			s.log.Error("initial audio schedule failed", "err", err)
+		}
+	}()
 	s.log.Info("scheduler started")
 	<-ctx.Done()
 	s.log.Info("scheduler stopped")
 }
 
+// enqueuePremiumAudioBriefs turns the two public audio editions into a daily
+// appointment for connected Premium members. It runs in Vietnam time because
+// the editorial schedule is fixed at 06:00 and 20:00 ICT.
+func (s *Scheduler) enqueuePremiumAudioBriefs(ctx context.Context) error {
+	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+	if err != nil {
+		loc = time.FixedZone("ICT", 7*60*60)
+	}
+	now := time.Now().In(loc)
+	editions := []struct {
+		name string
+		hour int
+	}{{"morning", 6}, {"evening", 20}}
+	for _, edition := range editions {
+		if now.Hour() < edition.hour {
+			continue
+		}
+		brief, err := s.db.Engagement.AudioBriefForDate(ctx, now, edition.name)
+		if err != nil {
+			if err == domain.ErrNotFound {
+				continue
+			}
+			return err
+		}
+		if brief.DurationSeconds == nil || *brief.DurationSeconds < 180 {
+			continue
+		}
+		users, err := s.db.Telegram.PremiumUsersForAudioBrief(ctx, edition.name)
+		if err != nil {
+			return err
+		}
+		for _, userID := range users {
+			if err := s.enqueue.EnqueueSendPremiumBrief(ctx, userID, now, edition.name); err != nil {
+				s.log.Error("enqueue premium audio failed", "user", userID, "edition", edition.name, "err", err)
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Scheduler) enqueueDailyAudio(ctx context.Context) error {
-	now := time.Now()
+	// The newsroom appointments are fixed to Vietnam time regardless of the
+	// server's deployment timezone. Because scheduler loops run immediately on
+	// startup, this also creates a missed edition when a worker starts late.
+	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+	if err != nil {
+		loc = time.FixedZone("ICT", 7*60*60)
+	}
+	now := time.Now().In(loc)
 	editions := []struct {
 		name string
 		hour int
 	}{{"morning", 5}, {"evening", 19}}
 	for _, edition := range editions {
 		if now.Hour() < edition.hour {
+			s.log.Info("audio edition not due", "edition", edition.name, "date", now.Format("2006-01-02"), "hour", now.Hour())
 			continue
 		}
 		exists, err := s.db.Engagement.HasAudioBriefDate(ctx, now, edition.name)
 		if err != nil {
 			return err
 		}
+		s.log.Info("audio edition check", "edition", edition.name, "date", now.Format("2006-01-02"), "ready", exists)
 		if !exists {
 			if err := s.enqueue.EnqueueGenerateAudio(ctx, now, edition.name); err != nil {
 				return err
 			}
+			s.log.Info("audio generation enqueued", "edition", edition.name, "date", now.Format("2006-01-02"))
 		}
 	}
 	return nil
@@ -69,6 +135,70 @@ func (s *Scheduler) refreshAnalysisCandidates(ctx context.Context) error {
 	}
 	if count > 0 {
 		s.log.Info("analysis desk refreshed", "candidates", count)
+	}
+	// Continuously draft the top proposed candidates so "Góc nhìn BaoTheX"
+	// pieces are written automatically. Each draft still lands in needs_review
+	// for an editor to approve before it is published — generation is automatic,
+	// publishing stays gated. Daily LLM budget caps the real spend.
+	return s.enqueueAnalysisDrafts(ctx, 3)
+}
+
+// enqueueAnalysisDrafts picks the highest-scoring proposed candidates and
+// enqueues a draft-generation job for each (deduped per cluster).
+func (s *Scheduler) enqueueAnalysisDrafts(ctx context.Context, max int) error {
+	candidates, err := s.db.Analysis.ListCandidates(ctx, "proposed", max)
+	if err != nil {
+		return err
+	}
+	for _, c := range candidates {
+		// Claim the candidate first; if another run already took it, skip.
+		if err := s.db.Analysis.MarkDrafting(ctx, c.ClusterID); err != nil {
+			if err == domain.ErrNotFound {
+				continue
+			}
+			s.log.Error("analysis mark drafting failed", "cluster", c.ClusterID, "err", err)
+			continue
+		}
+		if err := s.enqueue.EnqueueGenerateAnalysis(ctx, c.ClusterID); err != nil {
+			_ = s.db.Analysis.MarkFailed(ctx, c.ClusterID, err)
+			s.log.Error("enqueue analysis draft failed", "cluster", c.ClusterID, "err", err)
+			continue
+		}
+		s.log.Info("analysis draft enqueued", "cluster", c.ClusterID)
+	}
+	return nil
+}
+
+// recleanBodies gradually re-cleans a batch of previously-ingested article
+// bodies through the current boilerplate filter, stripping trailing tag lists,
+// "đọc nhiều" rails and sponsored blocks. Pure text work — no LLM, no network.
+func (s *Scheduler) recleanBodies(ctx context.Context) error {
+	rows, err := s.db.Content.BodiesNeedingRecleanWide(ctx, 100)
+	if err != nil {
+		return err
+	}
+	cleaned := 0
+	for _, row := range rows {
+		vi := ingest.TrimTrailingBoilerplate(row.Vietnamese)
+		orig := ingest.TrimTrailingBoilerplate(row.Original)
+		if vi == row.Vietnamese && orig == row.Original {
+			continue
+		}
+		// Safety: never blank out a body that previously had content.
+		if strings.TrimSpace(orig) == "" {
+			orig = row.Original
+		}
+		if row.Vietnamese != "" && strings.TrimSpace(vi) == "" {
+			vi = row.Vietnamese
+		}
+		if err := s.db.Content.UpdateBodyText(ctx, row.ContentID, vi, orig); err != nil {
+			s.log.Error("reclean body failed", "content", row.ContentID, "err", err)
+			continue
+		}
+		cleaned++
+	}
+	if cleaned > 0 {
+		s.log.Info("recleaned article bodies", "count", cleaned)
 	}
 	return nil
 }

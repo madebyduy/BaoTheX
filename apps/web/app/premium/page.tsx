@@ -1,5 +1,6 @@
 import { Footer } from "../ui";
 import { CheckoutButton } from "./checkout-button";
+import { PremiumStatus } from "./premium-status";
 
 export default function PremiumPage() {
   return (
@@ -17,27 +18,40 @@ export default function PremiumPage() {
             thật sự quan tâm.
           </p>
           <CheckoutButton />
+          <PremiumStatus />
         </section>
         <section className="premium-grid">
           <article>
             <b>01</b>
-            <h2>Nghe báo mỗi sáng</h2>
-            <p>Bản audio 6–8 phút, phát trên web và gửi thẳng qua Telegram.</p>
+            <h2>Hai cuộc hẹn mỗi ngày</h2>
+            <p>
+              Thể thao 6h và 20h chỉ dùng tin đã biên tập tiếng Việt, phát trên web và gửi thẳng qua
+              Telegram.
+            </p>
           </article>
           <article>
             <b>02</b>
-            <h2>Tin đúng lúc</h2>
-            <p>Web Push và Telegram cho tin xác nhận, tỷ số, đội hình và chấn thương.</p>
+            <h2>Tin đúng đội bạn</h2>
+            <p>
+              Telegram và Web Push cho tin xác nhận, tỷ số, đội hình, chấn thương và chuyển nhượng
+              của đội bạn theo dõi.
+            </p>
           </article>
           <article>
             <b>03</b>
             <h2>Theo dõi thật sự</h2>
-            <p>Cá nhân hóa theo đội bóng, giải đấu, vận động viên và nguồn bạn tin tưởng.</p>
+            <p>
+              Cá nhân hóa theo đội bóng, giải đấu, vận động viên và nguồn bạn tin tưởng — không cần
+              doomscroll.
+            </p>
           </article>
           <article>
             <b>04</b>
-            <h2>Một sự kiện, mọi nguồn</h2>
-            <p>Xem nhiều góc nhìn trong một cụm tin, có nhãn xác minh và độ uy tín.</p>
+            <h2>Góc Nhìn BaoTheX</h2>
+            <p>
+              Bài phân tích đa nguồn: điều đã xác nhận, điểm các nguồn còn vênh nhau và điều cần
+              theo dõi tiếp.
+            </p>
           </article>
         </section>
       </main>

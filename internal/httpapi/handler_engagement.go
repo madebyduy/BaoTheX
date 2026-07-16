@@ -23,7 +23,6 @@ func (s *Server) handlePublicCapabilities(w http.ResponseWriter, r *http.Request
 		"web_push_public_key":   s.cfg.WebPushPublicKey,
 		"premium_monthly_price": s.cfg.PremiumMonthlyPrice,
 		"sepay_enabled":         s.cfg.SePayMerchant != "" && s.cfg.SePaySecretKey != "",
-		"video_brief_enabled":   s.cfg.FFmpegPath != "" && s.cfg.VideoFontFile != "",
 	}, nil)
 }
 
@@ -137,15 +136,6 @@ func (s *Server) handleLatestAudioBrief(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	brief, err := s.db.Engagement.LatestAudioBrief(r.Context(), edition)
-	if err != nil {
-		writeDomainError(w, s.log, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, brief, nil)
-}
-
-func (s *Server) handleLatestVideoBrief(w http.ResponseWriter, r *http.Request) {
-	brief, err := s.db.Engagement.LatestVideoBrief(r.Context())
 	if err != nil {
 		writeDomainError(w, s.log, err)
 		return

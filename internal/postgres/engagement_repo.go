@@ -82,6 +82,43 @@ func (r *EngagementRepo) LatestAudioBrief(ctx context.Context, edition string) (
 	return &b, err
 }
 
+// AudioBriefForDate gets exactly one scheduled edition. It is used for
+// delivery so a delayed queue item can never accidentally send a newer issue.
+func (r *EngagementRepo) AudioBriefForDate(ctx context.Context, date time.Time, edition string) (*domain.AudioBrief, error) {
+	var b domain.AudioBrief
+	err := r.db.Pool.QueryRow(ctx, `
+		SELECT id,brief_date,edition,title,script,audio_url,duration_seconds,content_ids,status,error,created_at,updated_at
+		FROM audio_briefs WHERE brief_date=$1 AND edition=$2 AND status='ready' AND audio_url IS NOT NULL`,
+		date.Format("2006-01-02"), edition).
+		Scan(&b.ID, &b.BriefDate, &b.Edition, &b.Title, &b.Script, &b.AudioURL, &b.DurationSeconds, &b.ContentIDs, &b.Status, &b.Error, &b.CreatedAt, &b.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	return &b, err
+}
+
+// RecordAudioBriefDelivery claims a send slot before Telegram is called.
+// The unique key makes scheduled retries idempotent.
+func (r *EngagementRepo) RecordAudioBriefDelivery(ctx context.Context, briefID, userID int64, messageID *int64, deliveryErr *string) (bool, error) {
+	tag, err := r.db.Pool.Exec(ctx, `
+		INSERT INTO audio_brief_deliveries (audio_brief_id,user_id,telegram_message_id,error)
+		VALUES ($1,$2,$3,$4) ON CONFLICT (audio_brief_id,user_id) DO NOTHING`, briefID, userID, messageID, deliveryErr)
+	return tag.RowsAffected() == 1, err
+}
+
+func (r *EngagementRepo) CompleteAudioBriefDelivery(ctx context.Context, briefID, userID, messageID int64) error {
+	_, err := r.db.Pool.Exec(ctx, `
+		UPDATE audio_brief_deliveries SET telegram_message_id=$3,error=NULL,sent_at=now()
+		WHERE audio_brief_id=$1 AND user_id=$2`, briefID, userID, messageID)
+	return err
+}
+
+// ReleaseAudioBriefDelivery makes a transient Telegram failure retryable.
+func (r *EngagementRepo) ReleaseAudioBriefDelivery(ctx context.Context, briefID, userID int64) error {
+	_, err := r.db.Pool.Exec(ctx, `DELETE FROM audio_brief_deliveries WHERE audio_brief_id=$1 AND user_id=$2`, briefID, userID)
+	return err
+}
+
 func (r *EngagementRepo) HasAudioBriefDate(ctx context.Context, date time.Time, edition string) (bool, error) {
 	var exists bool
 	err := r.db.Pool.QueryRow(ctx, `SELECT EXISTS(
@@ -101,36 +138,32 @@ func (r *EngagementRepo) SaveAudioBrief(ctx context.Context, date time.Time, edi
 	return err
 }
 
-func (r *EngagementRepo) LatestVideoBrief(ctx context.Context) (*domain.VideoBrief, error) {
-	var b domain.VideoBrief
-	err := r.db.Pool.QueryRow(ctx, `
-		SELECT id,brief_date,title,script,video_url,thumbnail_url,duration_seconds,
-		       content_ids,youtube_video_id,status,error,created_at,updated_at
-		FROM video_briefs WHERE status IN ('ready','published') ORDER BY brief_date DESC LIMIT 1`).
-		Scan(&b.ID, &b.BriefDate, &b.Title, &b.Script, &b.VideoURL, &b.ThumbnailURL,
-			&b.DurationSeconds, &b.ContentIDs, &b.YouTubeVideoID, &b.Status, &b.Error, &b.CreatedAt, &b.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrNotFound
-	}
-	return &b, err
-}
-
-func (r *EngagementRepo) HasVideoBriefDate(ctx context.Context, date time.Time) (bool, error) {
-	var exists bool
-	err := r.db.Pool.QueryRow(ctx, `SELECT EXISTS(
-		SELECT 1 FROM video_briefs WHERE brief_date=$1 AND status IN ('rendering','ready','published'))`,
-		date.Format("2006-01-02")).Scan(&exists)
-	return exists, err
-}
-
-func (r *EngagementRepo) SaveVideoBrief(ctx context.Context, date time.Time, title, script, videoURL, thumbnailURL string, duration int, ids []int64) error {
-	_, err := r.db.Pool.Exec(ctx, `
-		INSERT INTO video_briefs (brief_date,title,script,video_url,thumbnail_url,duration_seconds,content_ids,status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'ready')
-		ON CONFLICT (brief_date) DO UPDATE SET title=$2,script=$3,video_url=$4,
-		 thumbnail_url=$5,duration_seconds=$6,content_ids=$7,status='ready',error=NULL,updated_at=now()`,
-		date.Format("2006-01-02"), title, script, videoURL, thumbnailURL, duration, ids)
+// AddReaction records a device's like for a content item (idempotent per device).
+func (r *EngagementRepo) AddReaction(ctx context.Context, contentID int64, clientID string) error {
+	_, err := r.db.Pool.Exec(ctx,
+		`INSERT INTO content_reactions (content_id, client_id) VALUES ($1,$2)
+		 ON CONFLICT (content_id, client_id) DO NOTHING`, contentID, clientID)
 	return err
+}
+
+// RemoveReaction removes a device's like.
+func (r *EngagementRepo) RemoveReaction(ctx context.Context, contentID int64, clientID string) error {
+	_, err := r.db.Pool.Exec(ctx,
+		`DELETE FROM content_reactions WHERE content_id=$1 AND client_id=$2`, contentID, clientID)
+	return err
+}
+
+// Reactions returns the total like count and whether the given device liked it.
+func (r *EngagementRepo) Reactions(ctx context.Context, contentID int64, clientID string) (int, bool, error) {
+	var count int
+	var liked bool
+	err := r.db.Pool.QueryRow(ctx, `
+		SELECT count(*)::int, COALESCE(bool_or(client_id = $2), false)
+		FROM content_reactions WHERE content_id=$1`, contentID, clientID).Scan(&count, &liked)
+	if err != nil {
+		return 0, false, err
+	}
+	return count, liked, nil
 }
 
 func (r *EngagementRepo) UpsertPushSubscription(ctx context.Context, userID int64, sub domain.PushSubscription) error {

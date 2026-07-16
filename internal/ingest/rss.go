@@ -227,12 +227,52 @@ func absoluteURL(baseURL, raw string) string {
 	return base.ResolveReference(u).String()
 }
 
+// noiseClassMarkers flag container classes/ids that hold related-article rails,
+// tag lists, sponsored/product blocks, share bars and comment widgets — the
+// boilerplate publishers nest inside <article>/<main> around the real body.
+var noiseClassMarkers = []string{
+	"relate", "box-tag", "tag-list", "list-tag", "article-tag", "keyword",
+	"advert", "adsbygoogle", "ads-", "-ads", "banner", "sponsor",
+	"recommend", "trending", "popular", "doc-nhieu", "most-read", "also-read",
+	"readmore", "read-more", "share", "social", "comment", "newsletter",
+	"subscribe", "outbrain", "taboola", "mgid",
+}
+
+// isNoiseNode reports whether an element is a non-article widget we should skip
+// wholesale during text extraction.
+func isNoiseNode(n *html.Node) bool {
+	if n.Type != html.ElementNode {
+		return false
+	}
+	if n.Data == "aside" {
+		return true
+	}
+	for _, attr := range n.Attr {
+		k := strings.ToLower(attr.Key)
+		if k != "class" && k != "id" {
+			continue
+		}
+		v := strings.ToLower(attr.Val)
+		for _, marker := range noiseClassMarkers {
+			if strings.Contains(v, marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func nodeText(n *html.Node) string {
 	if n.Type == html.TextNode {
 		return n.Data + " "
 	}
-	if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style" || n.Data == "noscript" || n.Data == "nav" || n.Data == "footer") {
-		return ""
+	if n.Type == html.ElementNode {
+		if n.Data == "script" || n.Data == "style" || n.Data == "noscript" || n.Data == "nav" || n.Data == "footer" {
+			return ""
+		}
+		if isNoiseNode(n) {
+			return ""
+		}
 	}
 	var b strings.Builder
 	for child := n.FirstChild; child != nil; child = child.NextSibling {

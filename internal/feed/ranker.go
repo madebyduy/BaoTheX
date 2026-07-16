@@ -28,3 +28,15 @@ func (r *Ranker) PersonalFeed(ctx context.Context, userID int64, page, perPage i
 	}
 	return r.db.Content.PersonalFeed(ctx, userID, perPage, (page-1)*perPage)
 }
+
+// FollowingFeed returns only content matching topics explicitly followed by
+// the user. It intentionally has no generic discovery fallback.
+func (r *Ranker) FollowingFeed(ctx context.Context, userID int64, page, perPage int) ([]domain.ContentItem, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage <= 0 || perPage > 50 {
+		perPage = 20
+	}
+	return r.db.Content.FollowingFeed(ctx, userID, perPage, (page-1)*perPage)
+}

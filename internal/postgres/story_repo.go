@@ -51,17 +51,26 @@ func (r *ContentRepo) ClusterContent(ctx context.Context, contentID int64, title
 }
 
 func (r *ContentRepo) refreshCluster(ctx context.Context, tx pgx.Tx, clusterID int64) error {
+	// Verification is weighted by source quality, not a raw source count: three
+	// low-quality outlets copying each other must NOT read as "confirmed", while
+	// two independent high-quality sources should. quality_sources counts
+	// distinct sources with quality >= 4 (tier-1 / reliable).
 	_, err := tx.Exec(ctx, `
 		WITH stats AS (
 			SELECT count(DISTINCT c.source_id)::int AS sources,
+			       count(DISTINCT c.source_id) FILTER (WHERE s.quality >= 4)::int AS quality_sources,
 			       (array_agg(c.id ORDER BY c.final_score DESC,c.published_at DESC))[1] AS primary_id
-			FROM story_cluster_items sci JOIN content_items c ON c.id=sci.content_id
+			FROM story_cluster_items sci
+			JOIN content_items c ON c.id=sci.content_id
+			JOIN sources s ON s.id=c.source_id
 			WHERE sci.cluster_id=$1)
 		UPDATE story_clusters sc SET
 			source_count=stats.sources,
 			primary_content_id=stats.primary_id,
-			verification_status=CASE WHEN stats.sources>=3 THEN 'confirmed'
-				WHEN stats.sources=2 THEN 'verifying' ELSE 'rumor' END,
+			verification_status=CASE
+				WHEN (stats.sources>=3 AND stats.quality_sources>=1) OR stats.quality_sources>=2 THEN 'confirmed'
+				WHEN stats.sources>=2 OR stats.quality_sources>=1 THEN 'verifying'
+				ELSE 'rumor' END,
 			updated_at=now()
 		FROM stats WHERE sc.id=$1`, clusterID)
 	return err

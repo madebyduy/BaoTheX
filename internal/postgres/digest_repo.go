@@ -33,14 +33,19 @@ func (r *ContentRepo) DailyCandidates(ctx context.Context, userID int64, content
 		      WHERE ct.content_id=c.id AND m.user_id=$1)
 		ORDER BY (
 		    c.final_score
-		    + CASE WHEN EXISTS (
-		        SELECT 1 FROM content_topics ct
+		    + COALESCE((SELECT MAX(22 + LEAST(GREATEST(utf.priority, 0), 3) * 5)
+		        FROM content_topics ct
 		        JOIN user_topic_follows utf ON utf.topic_id=ct.topic_id
-		        WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_telegram) THEN 10 ELSE 0 END
-		    + CASE WHEN EXISTS (
-		        SELECT 1 FROM content_entities ce
+		        WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_telegram
+		          AND (NOT utf.highlights_only OR c.final_score >= 40)), 0)
+		    + COALESCE((SELECT MAX(18 + LEAST(GREATEST(uef.priority, 0), 3) * 5)
+		        FROM content_entities ce
 		        JOIN user_entity_follows uef ON uef.entity_id=ce.entity_id
-		        WHERE ce.content_id=c.id AND uef.user_id=$1 AND uef.in_telegram) THEN 10 ELSE 0 END
+		        WHERE ce.content_id=c.id AND uef.user_id=$1 AND uef.in_telegram
+		          AND (NOT uef.highlights_only OR c.final_score >= 40)), 0)
+		    + CASE WHEN EXISTS (
+		        SELECT 1 FROM user_source_follows usf
+		        WHERE usf.source_id=c.source_id AND usf.user_id=$1) THEN 8 ELSE 0 END
 		  ) DESC, c.published_at DESC
 		LIMIT $4`, userID, minScore, nullableTextArray(contentTypes), limit)
 	if err != nil {

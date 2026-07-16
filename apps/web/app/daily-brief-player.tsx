@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { type AudioTrack, usePersistentAudio } from "./persistent-audio-player";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 type Edition = "morning" | "evening";
@@ -16,22 +17,38 @@ type Brief = {
 export function DailyBriefPlayer() {
   const [briefs, setBriefs] = useState<Partial<Record<Edition, Brief>>>({});
   useEffect(() => {
-    void Promise.all(
-      (["morning", "evening"] as Edition[]).map(async (edition) => {
-        const response = await fetch(`${API}/api/v1/audio-briefs/latest?edition=${edition}`);
-        if (!response.ok) return null;
-        const json = await response.json();
-        return (json.data ?? json) as Brief;
-      }),
-    )
-      .then((values) => {
+    let active = true;
+    const loadBriefs = async () => {
+      try {
+        const values = await Promise.all(
+          (["morning", "evening"] as Edition[]).map(async (edition) => {
+            const response = await fetch(`${API}/api/v1/audio-briefs/latest?edition=${edition}`, {
+              cache: "no-store",
+            });
+            if (!response.ok) return null;
+            const json = await response.json();
+            return (json.data ?? json) as Brief;
+          }),
+        );
+        if (!active) return;
+        const today = localDateKey(new Date());
         const next: Partial<Record<Edition, Brief>> = {};
         values.forEach((brief) => {
-          if (brief) next[brief.edition] = brief;
+          if (brief && localDateKey(new Date(brief.brief_date)) === today) {
+            next[brief.edition] = brief;
+          }
         });
         setBriefs(next);
-      })
-      .catch(() => setBriefs({}));
+      } catch {
+        if (active) setBriefs({});
+      }
+    };
+    void loadBriefs();
+    const timer = window.setInterval(() => void loadBriefs(), 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, []);
 
   return (
@@ -50,7 +67,27 @@ export function DailyBriefPlayer() {
   );
 }
 
+function localDateKey(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
 function BriefCard({ edition, time, brief }: { edition: Edition; time: string; brief?: Brief }) {
+  const { track, playing, playTrack } = usePersistentAudio();
+  const audioTrack: AudioTrack | null = brief?.audio_url
+    ? {
+        id: `daily-brief:${edition}:${brief.brief_date}`,
+        src: brief.audio_url,
+        title: brief.title,
+        subtitle: `${edition === "morning" ? "Bản tin 6h" : "Bản tin 20h"} · Báo Thể Ích`,
+        href: "/",
+      }
+    : null;
+  const isCurrent = !!audioTrack && track?.id === audioTrack.id;
   return (
     <div className={`brief-edition ${edition}`}>
       <div className="brief-time">
@@ -65,7 +102,18 @@ function BriefCard({ edition, time, brief }: { edition: Edition; time: string; b
             : "Đang chuẩn bị ấn bản mới"}
         </small>
       </div>
-      {brief?.audio_url ? <audio controls preload="metadata" src={brief.audio_url} /> : <i>▶</i>}
+      {audioTrack ? (
+        <button
+          className={`brief-play-button ${isCurrent ? "active" : ""}`}
+          type="button"
+          onClick={() => playTrack(audioTrack)}
+        >
+          <span>{isCurrent && playing ? "Ⅱ" : "▶"}</span>
+          {isCurrent && playing ? "Đang nghe" : isCurrent ? "Tiếp tục" : "Nghe ngay"}
+        </button>
+      ) : (
+        <i>▶</i>
+      )}
     </div>
   );
 }

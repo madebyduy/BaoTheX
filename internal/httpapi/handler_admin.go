@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,7 +154,13 @@ func (s *Server) handleAdminListContent(w http.ResponseWriter, r *http.Request) 
 	if q.Get("needs_review") == "true" {
 		status = string(domain.StatusNeedsReview)
 	}
-	items, total, err := s.adminListContent(r, f, status)
+	var minScore float64
+	if raw := q.Get("min_score"); raw != "" {
+		if parsed, err := strconv.ParseFloat(raw, 64); err == nil {
+			minScore = parsed
+		}
+	}
+	items, total, err := s.adminListContent(r, f, status, minScore)
 	if err != nil {
 		writeDomainError(w, s.log, err)
 		return
@@ -161,11 +168,10 @@ func (s *Server) handleAdminListContent(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, nonNilItems(items), &Meta{Page: page, PerPage: perPage, Total: total})
 }
 
-// adminListContent lists content by explicit status (not limited to 'ready').
-func (s *Server) adminListContent(r *http.Request, f postgres.ContentFilter, status string) ([]domain.ContentItem, int, error) {
-	// Reuse the repo List but without OnlyReady; emulate status filter via a
-	// dedicated query path.
-	return s.db.Content.AdminList(r.Context(), status, f.Type, f.Limit, f.Offset)
+// adminListContent lists content by explicit status (not limited to 'ready'),
+// ordered by notability and optionally filtered to a minimum score.
+func (s *Server) adminListContent(r *http.Request, f postgres.ContentFilter, status string, minScore float64) ([]domain.ContentItem, int, error) {
+	return s.db.Content.AdminList(r.Context(), status, f.Type, minScore, f.Limit, f.Offset)
 }
 
 type adminUpdateContentReq struct {

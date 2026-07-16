@@ -31,8 +31,8 @@ const (
 	JobSendWeekly       = "send_weekly"
 	JobFollowAlert      = "follow_alert"
 	JobGenerateAudio    = "generate_audio_brief"
-	JobGenerateVideo    = "generate_video_brief"
 	JobGenerateAnalysis = "generate_cluster_analysis"
+	JobSendPremiumBrief = "send_premium_audio_brief"
 )
 
 // Job is one unit of background work stored in the jobs table.
@@ -80,6 +80,14 @@ type DigestPayload struct {
 }
 
 type BriefPayload struct {
+	Date    string `json:"date"`
+	Edition string `json:"edition"`
+}
+
+// PremiumBriefPayload targets one member and one of the two fixed editions.
+// It deliberately carries a date so delayed jobs never send yesterday's brief.
+type PremiumBriefPayload struct {
+	UserID  int64  `json:"user_id"`
 	Date    string `json:"date"`
 	Edition string `json:"edition"`
 }

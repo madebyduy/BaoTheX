@@ -91,6 +91,17 @@ func (s *Server) handleUpdatePrefs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation", "daily_max_items must be between 3 and 7")
 		return
 	}
+	if prefs.FeedFollowingOnly {
+		hasTopics, checkErr := s.db.Follow.HasFeedTopics(r.Context(), u.ID)
+		if checkErr != nil {
+			writeDomainError(w, s.log, checkErr)
+			return
+		}
+		if !hasTopics {
+			writeError(w, http.StatusBadRequest, "validation", "follow at least one feed topic before enabling strict mode")
+			return
+		}
+	}
 	if err := s.db.Telegram.UpdatePrefs(r.Context(), prefs); err != nil {
 		writeDomainError(w, s.log, err)
 		return

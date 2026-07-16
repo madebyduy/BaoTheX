@@ -83,7 +83,7 @@ func pagination(r *http.Request) (page, perPage, offset int) {
 		page = 1
 	}
 	perPage = atoiDefault(r.URL.Query().Get("per_page"), 20)
-	if perPage < 1 || perPage > 50 {
+	if perPage < 1 || perPage > 100 {
 		perPage = 20
 	}
 	return page, perPage, (page - 1) * perPage

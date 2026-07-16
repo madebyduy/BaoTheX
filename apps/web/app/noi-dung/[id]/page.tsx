@@ -1,8 +1,14 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { api, type ContentBody, type Item, typeLabel } from "../../lib";
 import { Footer } from "../../ui";
-import { SaveButton, TranslateButton } from "../../action-buttons";
+import { LikeButton, SaveButton, ShareBar, TranslateButton } from "../../action-buttons";
+
+const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://baothex.vn";
+// generateMetadata and the page both need the article. Using the SAME revalidate
+// lets Next dedupe them into a single upstream request instead of two.
+const ARTICLE_REVALIDATE = 60;
 
 type Detail = {
   item?: Item;
@@ -30,12 +36,54 @@ type Detail = {
   };
 };
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const data = await api<Detail>(`/content/${id}`, {}, ARTICLE_REVALIDATE);
+  const item = data.item;
+  if (!item) return { title: "Không tìm thấy bài viết" };
+  const description = (
+    item.summary ||
+    item.excerpt ||
+    "Tin thể thao chọn lọc, kiểm chứng nguồn trên BaoTheX."
+  )
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+  const url = `${SITE}/noi-dung/${id}`;
+  const images = item.image_url ? [item.image_url] : undefined;
+  return {
+    title: item.title,
+    description,
+    alternates: { canonical: url },
+    openGraph: {
+      type: "article",
+      siteName: "BaoTheX",
+      locale: "vi_VN",
+      title: item.title,
+      description,
+      url,
+      images,
+      publishedTime: item.published_at,
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: item.title,
+      description,
+      images,
+    },
+  };
+}
+
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const [data, related, newsroom] = await Promise.all([
-    api<Detail>(`/content/${id}`, {}, 30),
-    api<Item[]>(`/content/${id}/related`, [], 30),
-    api<Item[]>("/content?per_page=8&sort=top", [], 30),
+    api<Detail>(`/content/${id}`, {}, ARTICLE_REVALIDATE),
+    api<Item[]>(`/content/${id}/related`, [], ARTICLE_REVALIDATE),
+    api<Item[]>("/content?per_page=8&sort=top", [], ARTICLE_REVALIDATE),
   ]);
   if (!data.item) notFound();
   const item = data.item;
@@ -53,8 +101,35 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   // Video thường chứa timecode như 0:00, 1:35 nên tuyệt đối không suy diễn
   // các con số trong mô tả thành tỷ số trận đấu.
   const score = item.type === "article" ? scorelineFrom(item.title) : "";
+  const pageUrl = `${SITE}/noi-dung/${item.id}`;
+  // Góc nhìn / editorial pieces store an internal canonical (/goc-nhin/...) and
+  // have no external "bài gốc"; only treat http(s) URLs as a real source link.
+  const externalSource =
+    item.canonical_url && /^https?:\/\//i.test(item.canonical_url) ? item.canonical_url : "";
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "NewsArticle",
+    headline: item.title,
+    description: (item.summary || item.excerpt || "").slice(0, 300) || undefined,
+    image: item.image_url ? [item.image_url] : undefined,
+    datePublished: item.published_at,
+    dateModified: item.published_at,
+    articleSection: typeLabel(item.type),
+    author: { "@type": "Organization", name: item.source_name || "BaoTheX" },
+    publisher: {
+      "@type": "Organization",
+      name: "BaoTheX",
+      logo: { "@type": "ImageObject", url: `${SITE}/icon.png` },
+    },
+    mainEntityOfPage: { "@type": "WebPage", "@id": pageUrl },
+    isBasedOn: externalSource || undefined,
+  };
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <main className="wrap article-page">
         <div className="article-kicker">
           <span className="tag">{typeLabel(item.type)}</span>
@@ -71,6 +146,11 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
             <img src={item.image_url} alt="" />
           </div>
         ) : null}
+        <div className="article-actions">
+          <LikeButton contentId={item.id} />
+          <SaveButton contentId={item.id} />
+          <ShareBar title={item.title} />
+        </div>
         <div className="article-layout">
           <aside className="article-aside">
             <span className="eyebrow">THÔNG TIN BÀI</span>
@@ -106,19 +186,11 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
                 <span>{data.research.journal}</span>
               </div>
             ) : null}
-            {item.canonical_url ? (
-              <a
-                className="article-source"
-                href={item.canonical_url}
-                target="_blank"
-                rel="noreferrer"
-              >
+            {externalSource ? (
+              <a className="article-source" href={externalSource} target="_blank" rel="noreferrer">
                 Mở bài gốc ↗
               </a>
             ) : null}
-            <div id="luu">
-              <SaveButton contentId={item.id} />
-            </div>
           </aside>
           <div className="article-body">
             {data.video?.youtube_id ? (

@@ -219,16 +219,22 @@ func (r *ContentRepo) InsertBody(ctx context.Context, tx pgx.Tx, contentID int64
 // UpsertBodyByURLHash backfills the body when a source is re-fetched after the
 // content item already exists. This lets newly-enabled full-text ingestion
 // upgrade items that were previously stored with only an excerpt.
-func (r *ContentRepo) UpsertBodyByURLHash(ctx context.Context, urlHash, language, body string) error {
-	_, err := r.db.Pool.Exec(ctx, `INSERT INTO content_bodies
+func (r *ContentRepo) UpsertBodyByURLHash(ctx context.Context, urlHash, language, body string) (int64, bool, error) {
+	var contentID int64
+	err := r.db.Pool.QueryRow(ctx, `INSERT INTO content_bodies
 		(content_id, original_language, original_body)
 		SELECT id, $2, $3 FROM content_items WHERE url_hash=$1
 		ON CONFLICT (content_id) DO UPDATE SET
 		original_language=EXCLUDED.original_language,
-		original_body=CASE WHEN length(EXCLUDED.original_body) > length(content_bodies.original_body)
-			THEN EXCLUDED.original_body ELSE content_bodies.original_body END,
-		updated_at=now()`, urlHash, language, body)
-	return err
+		original_body=EXCLUDED.original_body,
+		translation_status='pending',
+		updated_at=now()
+		WHERE length(EXCLUDED.original_body) > length(content_bodies.original_body)
+		RETURNING content_id`, urlHash, language, body).Scan(&contentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	return contentID, err == nil, err
 }
 
 // BackfillMediaByURLHash upgrades an existing RSS item when a later crawl
@@ -274,6 +280,77 @@ func (r *ContentRepo) BackfillMediaByID(ctx context.Context, id int64, imageURL,
 }
 
 // GetBody returns the source body and optional Vietnamese translation.
+// BodyReclean is a stored body flagged for boilerplate re-cleaning.
+type BodyReclean struct {
+	ContentID  int64
+	Vietnamese string
+	Original   string
+}
+
+// BodiesNeedingReclean returns bodies whose stored text still begins a line with
+// an end-of-article publisher block, so a re-clean is guaranteed to make
+// progress (once the marker line is cut, the row stops matching).
+func (r *ContentRepo) BodiesNeedingReclean(ctx context.Context, limit int) ([]BodyReclean, error) {
+	const marker = `(?n)^[[:space:]]*(tags?[:：]|đọc nhiều|thông tin doanh nghiệp|tin liên quan|bài liên quan)`
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT content_id, COALESCE(vietnamese_body,''), COALESCE(original_body,'')
+		FROM content_bodies
+		WHERE original_body ~* $1 OR vietnamese_body ~* $1
+		ORDER BY content_id DESC
+		LIMIT $2`, marker, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BodyReclean
+	for rows.Next() {
+		var b BodyReclean
+		if err := rows.Scan(&b.ContentID, &b.Vietnamese, &b.Original); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// BodiesNeedingRecleanWide also finds legacy bodies where publisher widgets
+// were concatenated onto the same line as the article text.
+func (r *ContentRepo) BodiesNeedingRecleanWide(ctx context.Context, limit int) ([]BodyReclean, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT content_id, COALESCE(vietnamese_body,''), COALESCE(original_body,'')
+		FROM content_bodies
+		WHERE strpos(lower(original_body), 'tags:') > 400
+		   OR strpos(lower(vietnamese_body), 'tags:') > 400
+		   OR strpos(lower(original_body), 'thông tin doanh nghiệp') > 400
+		   OR strpos(lower(vietnamese_body), 'thông tin doanh nghiệp') > 400
+		   OR strpos(lower(original_body), 'trở lại chủ đề') > 400
+		   OR strpos(lower(vietnamese_body), 'trở lại chủ đề') > 400
+		   OR strpos(lower(original_body), 'tặng sao') > 400
+		   OR strpos(lower(vietnamese_body), 'tặng sao') > 400
+		ORDER BY content_id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BodyReclean
+	for rows.Next() {
+		var b BodyReclean
+		if err := rows.Scan(&b.ContentID, &b.Vietnamese, &b.Original); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// UpdateBodyText overwrites a stored body's cleaned text.
+func (r *ContentRepo) UpdateBodyText(ctx context.Context, contentID int64, vietnamese, original string) error {
+	_, err := r.db.Pool.Exec(ctx, `UPDATE content_bodies
+		SET vietnamese_body = NULLIF($2,''), original_body = $3, updated_at = now()
+		WHERE content_id = $1`, contentID, vietnamese, original)
+	return err
+}
+
 func (r *ContentRepo) GetBody(ctx context.Context, contentID int64) (*domain.ContentBody, error) {
 	var b domain.ContentBody
 	err := r.db.Pool.QueryRow(ctx, `SELECT content_id, original_language, original_body,
@@ -302,6 +379,22 @@ func (r *ContentRepo) SetVietnameseContent(ctx context.Context, contentID int64,
 func (r *ContentRepo) MarkTranslationPending(ctx context.Context, contentID int64) error {
 	_, err := r.db.Pool.Exec(ctx, `UPDATE content_bodies SET translation_status='processing', updated_at=now() WHERE content_id=$1`, contentID)
 	return err
+}
+
+// QuarantineBlockedArticle removes derived AI text and returns an access-wall
+// item to editorial review. The canonical source link and metadata are kept.
+func (r *ContentRepo) QuarantineBlockedArticle(ctx context.Context, contentID int64) error {
+	return r.db.WithTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE content_bodies SET
+			original_body='', vietnamese_body=NULL, translation_status='blocked', translated_at=NULL, updated_at=now()
+			WHERE content_id=$1`, contentID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE content_items SET
+			status='needs_review', translated_title=NULL, summary=NULL, key_points='{}', updated_at=now()
+			WHERE id=$1`, contentID)
+		return err
+	})
 }
 
 // GetResearch returns the research subtype row for a content id.
@@ -440,7 +533,7 @@ func (r *ContentRepo) List(ctx context.Context, f ContentFilter) ([]domain.Conte
 
 // AdminList lists content of any status (optionally filtered by status and
 // type), newest first, plus a total count. Used by the admin content queue.
-func (r *ContentRepo) AdminList(ctx context.Context, status, typ string, limit, offset int) ([]domain.ContentItem, int, error) {
+func (r *ContentRepo) AdminList(ctx context.Context, status, typ string, minScore float64, limit, offset int) ([]domain.ContentItem, int, error) {
 	var where []string
 	var args []any
 	add := func(cond string, val any) {
@@ -453,6 +546,9 @@ func (r *ContentRepo) AdminList(ctx context.Context, status, typ string, limit, 
 	if typ != "" {
 		add("c.type = $%d", typ)
 	}
+	if minScore > 0 {
+		add("c.final_score >= $%d", minScore)
+	}
 	whereSQL := ""
 	if len(where) > 0 {
 		whereSQL = " WHERE " + strings.Join(where, " AND ")
@@ -464,8 +560,10 @@ func (r *ContentRepo) AdminList(ctx context.Context, status, typ string, limit, 
 	}
 
 	args = append(args, limit, offset)
+	// Order by notability so the most important items to decide on surface first
+	// and never scroll off the bottom of the queue.
 	q := `SELECT ` + contentCols + `, s.name FROM content_items c JOIN sources s ON s.id=c.source_id` +
-		whereSQL + fmt.Sprintf(" ORDER BY c.discovered_at DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+		whereSQL + fmt.Sprintf(" ORDER BY c.final_score DESC NULLS LAST, c.editorial_boost DESC, c.discovered_at DESC, c.id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 	rows, err := r.db.Pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, 0, err
@@ -570,7 +668,7 @@ func (r *ContentRepo) TopDiscovery(ctx context.Context, userID int64, limit int)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM content_topics ct
 		      JOIN user_topic_follows utf ON utf.topic_id=ct.topic_id
-		      WHERE ct.content_id=c.id AND utf.user_id=$1)
+		      WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_feed)
 		  AND NOT EXISTS (SELECT 1 FROM hidden_items h WHERE h.user_id=$1 AND h.content_id=c.id)
 		ORDER BY c.final_score DESC, c.published_at DESC LIMIT $2`, userID, limit)
 	if err != nil {
@@ -595,14 +693,19 @@ WHERE c.status='ready'
       WHERE ct.content_id=c.id AND m.user_id=$1)
 ORDER BY (
     c.final_score
-    + CASE WHEN EXISTS (
-        SELECT 1 FROM content_topics ct
+    + COALESCE((SELECT MAX(22 + LEAST(GREATEST(utf.priority, 0), 3) * 5)
+        FROM content_topics ct
         JOIN user_topic_follows utf ON utf.topic_id=ct.topic_id
-        WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_feed) THEN 10 ELSE 0 END
-    + CASE WHEN EXISTS (
-        SELECT 1 FROM content_entities ce
+        WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_feed
+          AND (NOT utf.highlights_only OR c.final_score >= 40)), 0)
+    + COALESCE((SELECT MAX(18 + LEAST(GREATEST(uef.priority, 0), 3) * 5)
+        FROM content_entities ce
         JOIN user_entity_follows uef ON uef.entity_id=ce.entity_id
-        WHERE ce.content_id=c.id AND uef.user_id=$1 AND uef.in_feed) THEN 10 ELSE 0 END
+        WHERE ce.content_id=c.id AND uef.user_id=$1 AND uef.in_feed
+          AND (NOT uef.highlights_only OR c.final_score >= 40)), 0)
+    + CASE WHEN EXISTS (
+        SELECT 1 FROM user_source_follows usf
+        WHERE usf.source_id=c.source_id AND usf.user_id=$1) THEN 8 ELSE 0 END
     - CASE WHEN EXISTS (
         SELECT 1 FROM reading_history rh
         WHERE rh.content_id=c.id AND rh.user_id=$1) THEN 5 ELSE 0 END
@@ -611,6 +714,41 @@ ORDER BY (
 // PersonalFeed returns the paginated personalized feed for a user.
 func (r *ContentRepo) PersonalFeed(ctx context.Context, userID int64, limit, offset int) ([]domain.ContentItem, error) {
 	rows, err := r.db.Pool.Query(ctx, personalFeedSQL+` LIMIT $2 OFFSET $3`, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collectContent(rows)
+}
+
+// FollowingFeed is the strict personalized stream: every item must match at
+// least one topic the user explicitly keeps in their feed.
+func (r *ContentRepo) FollowingFeed(ctx context.Context, userID int64, limit, offset int) ([]domain.ContentItem, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT `+contentCols+`, s.name
+		FROM content_items c
+		JOIN sources s ON s.id=c.source_id
+		WHERE c.status='ready'
+		  AND c.published_at > now() - interval '30 days'
+		  AND EXISTS (
+		      SELECT 1 FROM content_topics ct
+		      JOIN user_topic_follows utf ON utf.topic_id=ct.topic_id
+		      WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_feed
+		        AND (NOT utf.highlights_only OR c.final_score >= 40))
+		  AND NOT EXISTS (SELECT 1 FROM hidden_items h WHERE h.user_id=$1 AND h.content_id=c.id)
+		  AND NOT EXISTS (
+		      SELECT 1 FROM content_topics ct
+		      JOIN user_topic_mutes m ON m.topic_id=ct.topic_id
+		      WHERE ct.content_id=c.id AND m.user_id=$1)
+		ORDER BY (
+		    c.final_score + COALESCE((
+		        SELECT MAX(LEAST(GREATEST(utf.priority, 0), 3) * 4)
+		        FROM content_topics ct
+		        JOIN user_topic_follows utf ON utf.topic_id=ct.topic_id
+		        WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_feed
+		    ), 0)
+		) DESC, c.published_at DESC
+		LIMIT $2 OFFSET $3`, userID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
@@ -84,6 +84,146 @@ export function FollowButton({ topicId, entityId }: { topicId?: number; entityId
     <button className="btn light" onClick={toggle}>
       {message || (following ? "Bỏ theo dõi" : entityId ? "Theo dõi nhân vật" : "Theo dõi chủ đề")}
     </button>
+  );
+}
+
+// getClientId returns a stable random per-device id used to dedup anonymous
+// likes without requiring login.
+function getClientId(): string {
+  try {
+    let id = localStorage.getItem("btx-cid");
+    if (!id) {
+      id =
+        (typeof crypto !== "undefined" && crypto.randomUUID?.()) ||
+        Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem("btx-cid", id);
+    }
+    return id;
+  } catch {
+    return "";
+  }
+}
+
+// LikeButton is a server-backed "thích" with a real, per-device-deduped count.
+export function LikeButton({ contentId }: { contentId: number }) {
+  const [liked, setLiked] = useState(false);
+  const [count, setCount] = useState(0);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const cid = getClientId();
+    fetch(`${API}/api/v1/content/${contentId}/reactions?client_id=${encodeURIComponent(cid)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j) return;
+        const d = j.data ?? j;
+        setLiked(Boolean(d.liked));
+        setCount(Number(d.count) || 0);
+      })
+      .catch(() => {});
+  }, [contentId]);
+
+  async function toggle() {
+    if (busy) return;
+    setBusy(true);
+    const cid = getClientId();
+    const next = !liked;
+    // Optimistic update; reconcile with the server's authoritative count.
+    setLiked(next);
+    setCount((c) => Math.max(0, c + (next ? 1 : -1)));
+    try {
+      const response = await fetch(`${API}/api/v1/content/${contentId}/like`, {
+        method: next ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: cid }),
+      });
+      if (response.ok) {
+        const j = await response.json();
+        const d = j.data ?? j;
+        setLiked(Boolean(d.liked));
+        setCount(Number(d.count) || 0);
+      }
+    } catch {
+      /* keep optimistic value */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      className={`like-btn ${liked ? "liked" : ""}`}
+      onClick={toggle}
+      aria-pressed={liked}
+      type="button"
+    >
+      <span className="heart" aria-hidden>
+        {liked ? "♥" : "♡"}
+      </span>
+      {liked ? "Đã thích" : "Thích"}
+      {count > 0 ? <span className="like-count">{count}</span> : null}
+    </button>
+  );
+}
+
+// ShareBar shares the current article via the native share sheet (mobile),
+// social networks, or a copy-link fallback. All client-side, no backend needed.
+export function ShareBar({ title }: { title: string }) {
+  const [url, setUrl] = useState("");
+  const [copied, setCopied] = useState(false);
+  useEffect(() => setUrl(window.location.href), []);
+
+  function openShare(target: "facebook" | "x" | "telegram") {
+    const u = encodeURIComponent(url);
+    const t = encodeURIComponent(title);
+    const links = {
+      facebook: `https://www.facebook.com/sharer/sharer.php?u=${u}`,
+      x: `https://twitter.com/intent/tweet?url=${u}&text=${t}`,
+      telegram: `https://t.me/share/url?url=${u}&text=${t}`,
+    };
+    window.open(links[target], "_blank", "noopener,noreferrer,width=620,height=520");
+  }
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+  async function nativeShare() {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({ title, url });
+      } catch {
+        /* user cancelled */
+      }
+    } else {
+      void copy();
+    }
+  }
+
+  return (
+    <div className="share-bar">
+      <span className="share-label">Chia sẻ</span>
+      <button className="share-btn fb" type="button" onClick={() => openShare("facebook")}>
+        Facebook
+      </button>
+      <button className="share-btn x" type="button" onClick={() => openShare("x")}>
+        X
+      </button>
+      <button className="share-btn tg" type="button" onClick={() => openShare("telegram")}>
+        Telegram
+      </button>
+      <button
+        className={`share-btn copy ${copied ? "copied" : ""}`}
+        type="button"
+        onClick={() => void nativeShare()}
+      >
+        {copied ? "Đã chép link ✓" : "Chép link"}
+      </button>
+    </div>
   );
 }
 

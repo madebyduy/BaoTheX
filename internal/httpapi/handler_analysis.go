@@ -47,6 +47,20 @@ func (s *Server) handleAdminGenerateAnalysis(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusAccepted, map[string]any{"queued": true, "cluster_id": clusterID}, nil)
 }
 
+func (s *Server) handleAdminPublishAnalysis(w http.ResponseWriter, r *http.Request) {
+	clusterID, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid cluster id")
+		return
+	}
+	contentID, err := s.db.Analysis.Publish(r.Context(), clusterID)
+	if err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"published": true, "cluster_id": clusterID, "content_id": contentID}, nil)
+}
+
 func (s *Server) handleAdminDismissAnalysis(w http.ResponseWriter, r *http.Request) {
 	clusterID, ok := pathInt(r, "id")
 	if !ok {

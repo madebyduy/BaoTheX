@@ -37,8 +37,12 @@ func Store(ctx context.Context, db *postgres.DB, src *domain.Source, raw RawItem
 			if lang == "" {
 				lang = src.DefaultLang
 			}
-			if err := db.Content.UpsertBodyByURLHash(ctx, urlHash, lang, *raw.Body); err != nil {
+			contentID, changed, err := db.Content.UpsertBodyByURLHash(ctx, urlHash, lang, *raw.Body)
+			if err != nil {
 				return 0, err
+			}
+			if changed {
+				return contentID, nil
 			}
 		}
 		return 0, nil

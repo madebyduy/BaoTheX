@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -129,7 +130,7 @@ func (r *AnalysisRepo) GetMaterials(ctx context.Context, clusterID int64) ([]dom
 }
 
 func (r *AnalysisRepo) MarkDrafting(ctx context.Context, clusterID int64) error {
-	tag, err := r.db.Pool.Exec(ctx, `UPDATE analysis_candidates SET status='drafting',selected_at=now(),last_error=NULL,updated_at=now() WHERE cluster_id=$1 AND status IN ('proposed','failed')`, clusterID)
+	tag, err := r.db.Pool.Exec(ctx, `UPDATE analysis_candidates SET status='drafting',selected_at=now(),last_error=NULL,updated_at=now() WHERE cluster_id=$1 AND status IN ('proposed','failed','needs_review')`, clusterID)
 	if err != nil {
 		return err
 	}
@@ -193,6 +194,33 @@ func (r *AnalysisRepo) CreateDraft(ctx context.Context, clusterID int64, claims 
 			conflicts=$3,unique_claims=$4,open_questions=$5,draft_content_id=$6,
 			generated_at=now(),last_error=NULL,updated_at=now() WHERE cluster_id=$1`,
 			clusterID, claims.Consensus, claims.Conflicts, claims.UniqueClaims, claims.OpenQuestions, contentID)
+		return err
+	})
+	return contentID, err
+}
+
+// Publish approves a reviewed draft: it flips the draft content to 'ready' so it
+// appears publicly, and marks the candidate 'published'. It only works while the
+// candidate is awaiting review, so a piece cannot be published twice or skip the
+// editorial gate.
+func (r *AnalysisRepo) Publish(ctx context.Context, clusterID int64) (int64, error) {
+	var contentID int64
+	err := r.db.WithTx(ctx, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `SELECT draft_content_id FROM analysis_candidates
+			WHERE cluster_id=$1 AND status='needs_review' AND draft_content_id IS NOT NULL`, clusterID).Scan(&contentID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE content_items
+			SET status='ready',published_at=COALESCE(published_at,now()),updated_at=now()
+			WHERE id=$1`, contentID); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE analysis_candidates
+			SET status='published',updated_at=now() WHERE cluster_id=$1`, clusterID)
 		return err
 	})
 	return contentID, err

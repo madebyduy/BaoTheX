@@ -40,3 +40,32 @@ func (r *LLMRepo) CallsLastHour(ctx context.Context) (int, error) {
 		`SELECT count(*) FROM llm_usage WHERE created_at >= now() - interval '1 hour' AND model LIKE '%:attempt'`).Scan(&total)
 	return total, err
 }
+
+// UsageSummary is a snapshot of today's LLM consumption for the admin panel.
+type UsageSummary struct {
+	SpendTodayUSD     float64 `json:"spend_today_usd"`
+	CallsToday        int     `json:"calls_today"`
+	CallsLastHour     int     `json:"calls_last_hour"`
+	InputTokensToday  int64   `json:"input_tokens_today"`
+	OutputTokensToday int64   `json:"output_tokens_today"`
+}
+
+// TodayUsage aggregates today's spend, request count and token totals. Attempt
+// rows (logged as "<model>:attempt") count as requests; token/cost totals come
+// from completed calls.
+func (r *LLMRepo) TodayUsage(ctx context.Context) (UsageSummary, error) {
+	var s UsageSummary
+	err := r.db.Pool.QueryRow(ctx, `
+		SELECT
+		  COALESCE(sum(cost_usd),0),
+		  count(*) FILTER (WHERE model LIKE '%:attempt'),
+		  COALESCE(sum(input_tokens),0),
+		  COALESCE(sum(output_tokens),0)
+		FROM llm_usage WHERE day = now()::date`).
+		Scan(&s.SpendTodayUSD, &s.CallsToday, &s.InputTokensToday, &s.OutputTokensToday)
+	if err != nil {
+		return s, err
+	}
+	s.CallsLastHour, err = r.CallsLastHour(ctx)
+	return s, err
+}

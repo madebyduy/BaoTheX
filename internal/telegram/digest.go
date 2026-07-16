@@ -94,7 +94,7 @@ func (d *Digest) diversify(ctx context.Context, items []domain.ContentItem, max 
 
 func (d *Digest) formatDaily(items []domain.ContentItem) string {
 	var b strings.Builder
-	b.WriteString("🏋️ *RepWire Morning Brief*\n\n")
+	b.WriteString("🗞 *Báo Thể Ích · Bản tin cá nhân*\n\n")
 	for i, it := range items {
 		b.WriteString(fmt.Sprintf("*%d\\. %s*\n", i+1, EscapeMarkdownV2(it.Title)))
 		if it.Excerpt != nil && *it.Excerpt != "" {
@@ -109,7 +109,7 @@ func (d *Digest) formatDaily(items []domain.ContentItem) string {
 
 func (d *Digest) formatWeekly(ctx context.Context, items []domain.ContentItem) string {
 	var b strings.Builder
-	b.WriteString("🔬 *RepWire Weekly Research*\n\n")
+	b.WriteString("🔎 *Báo Thể Ích · Đọc sâu cuối tuần*\n\n")
 	for i, it := range items {
 		b.WriteString(fmt.Sprintf("*%d\\. %s*\n", i+1, EscapeMarkdownV2(it.Title)))
 		if rp, err := d.db.Content.GetResearch(ctx, it.ID); err == nil {
@@ -137,16 +137,10 @@ func (d *Digest) readLabel(t domain.ContentType) string {
 	}
 }
 
-// itemURL builds the canonical RepWire URL for an item by type.
+// itemURL builds the canonical BaoTheX URL. Every supported content type uses
+// the same detail route so Telegram links never land on retired legacy pages.
 func (d *Digest) itemURL(it domain.ContentItem) string {
-	switch it.Type {
-	case domain.ContentResearch:
-		return fmt.Sprintf("%s/r/%d", d.baseURL, it.ID)
-	case domain.ContentVideo:
-		return fmt.Sprintf("%s/v/%d", d.baseURL, it.ID)
-	default:
-		return fmt.Sprintf("%s/c/%d", d.baseURL, it.ID)
-	}
+	return fmt.Sprintf("%s/noi-dung/%d", d.baseURL, it.ID)
 }
 
 func clip(s string, n int) string {

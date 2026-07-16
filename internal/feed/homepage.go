@@ -53,7 +53,10 @@ func (b *Builder) Build(ctx context.Context, userID int64) (*Homepage, error) {
 	if err != nil {
 		return nil, err
 	}
-	sports, err := b.db.Content.ByTopicSlugs(ctx, []string{"bong-da-viet-nam", "bong-da-quoc-te", "bong-ro", "tennis", "the-thao-viet-nam"}, 8)
+	sports, err := b.db.Content.ByTopicSlugs(ctx, []string{
+		"bong-da-viet-nam", "bong-da-quoc-te", "bong-ro", "tennis", "cau-long",
+		"the-hinh", "the-thao-dien-tu", "the-thao-viet-nam",
+	}, 12)
 	if err != nil {
 		return nil, err
 	}

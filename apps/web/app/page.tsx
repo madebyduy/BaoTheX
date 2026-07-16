@@ -1,22 +1,64 @@
 import Link from "next/link";
-import { api, demoItems, demoTopics, type Item, type Source, type Topic } from "./lib";
+import { cookies } from "next/headers";
+import {
+  api,
+  apiWithCookie,
+  demoItems,
+  demoTopics,
+  type Item,
+  type Source,
+  type Topic,
+} from "./lib";
 import { Footer } from "./ui";
 import { DailyBriefPlayer } from "./daily-brief-player";
 
 type HomeData = { today?: Item[]; sports?: Item[]; videos?: Item[] };
+type FeedPreferences = { feed_following_only?: boolean };
 
 export default async function Home() {
-  const home = await api<HomeData>("/home", {});
-  const feed = await api<Item[]>(
-    "/content?type=article&per_page=30&sort=recent",
-    demoItems.filter((item) => item.type === "article"),
+  const cookieHeader = (await cookies()).toString();
+  const preferences = await apiWithCookie<FeedPreferences | null>(
+    "/notifications/prefs",
+    null,
+    cookieHeader,
   );
-  const [videoFeed, sources, analyses] = await Promise.all([
-    api<Item[]>("/videos?per_page=50&sort=recent", []),
-    api<Source[]>("/sources", []),
-    api<Item[]>("/analyses?limit=4", []),
+  const isPersonalized = preferences !== null;
+  const followingOnly = Boolean(preferences?.feed_following_only);
+  // The ranked feed carries the personalization. Supporting newsroom blocks
+  // stay public, and both requests run together to keep the homepage fast.
+  const [personalizedFeed, home] = await Promise.all([
+    isPersonalized
+      ? apiWithCookie<Item[]>(
+          `/feed?${followingOnly ? "strict=1&" : ""}per_page=50`,
+          [],
+          cookieHeader,
+        )
+      : Promise.resolve([] as Item[]),
+    followingOnly ? Promise.resolve({} as HomeData) : api<HomeData>("/home", {}),
   ]);
-  const fitnessSources = sources.filter(
+  const personalizedArticles = personalizedFeed.filter((item) => item.type === "article");
+  const publicArticles = followingOnly
+    ? []
+    : await api<Item[]>(
+        "/content?type=article&per_page=30&sort=recent",
+        demoItems.filter((item) => item.type === "article"),
+      );
+  // A personalized feed may temporarily contain only videos while newly
+  // followed topics are still being translated. Keep the newsroom populated
+  // with recent public articles unless the user explicitly selected strict mode.
+  const feed = followingOnly
+    ? personalizedArticles
+    : personalizedArticles.length
+      ? personalizedArticles
+      : publicArticles;
+  const [videoFeed, sources, analyses] = await Promise.all([
+    isPersonalized && personalizedFeed.length
+      ? Promise.resolve(personalizedFeed.filter((item) => item.type === "video"))
+      : api<Item[]>("/videos?per_page=50&sort=recent", []),
+    api<Source[]>("/sources", []),
+    followingOnly ? Promise.resolve([] as Item[]) : api<Item[]>("/analyses?limit=4", []),
+  ]);
+  const fitnessSources = (followingOnly ? [] : sources).filter(
     (source) =>
       source.kind === "youtube" &&
       /jeff nippard|renaissance|athlean|jeremy ethier|squat university|picturefit|hypertrophy/i.test(
@@ -32,16 +74,18 @@ export default async function Home() {
   const generalVideos = diversifyVideos(uniqueItems(videoFeed), 9);
   const latest = Array.from(
     new Map(
-      [...(home.today || []), ...(home.sports || []), ...feed]
+      [...feed, ...(home.today || []), ...(home.sports || [])]
         .filter((item) => item.type === "article")
         .map((item) => [item.id, item]),
     ).values(),
   ).slice(0, 30);
   const topics = await api<Topic[]>("/topics", demoTopics);
-  const sportsTopics = topics.filter((topic) =>
-    /bong|tennis|the-thao|motor|esport|khac/.test(topic.slug),
+  const sportsTopics = topics.filter(
+    (topic) =>
+      topic.category === "sport" ||
+      /bong|tennis|cau-long|the-thao|the-hinh|motor|esport|khac/.test(topic.slug),
   );
-  const lead = latest[0] || demoItems[0];
+  const lead = latest[0];
   const secondary = latest.slice(1, 5);
   const scored = Array.from(
     new Map(
@@ -83,13 +127,27 @@ export default async function Home() {
           </div>
           <nav className="category-strip">
             <Link href="/danh-muc">Mới nhất</Link>
-            {sportsTopics.slice(0, 7).map((topic) => (
+            {sportsTopics.slice(0, 10).map((topic) => (
               <Link href={`/chu-de/${topic.slug}`} key={topic.id}>
                 {topic.name}
               </Link>
             ))}
           </nav>
         </section>
+
+        {isPersonalized ? (
+          <section className={`personal-feed-mode ${followingOnly ? "strict" : "balanced"}`}>
+            <div>
+              <span>DÒNG TIN CỦA BẠN</span>
+              <strong>
+                {followingOnly
+                  ? "Chỉ hiển thị các chủ đề đang theo dõi"
+                  : "Đang ưu tiên sở thích và giữ một phần tin khám phá"}
+              </strong>
+            </div>
+            <Link href="/cai-dat">Tùy chỉnh dòng tin →</Link>
+          </section>
+        ) : null}
 
         <div className="sports-grid">
           <section className="sports-main">
@@ -100,23 +158,37 @@ export default async function Home() {
               </div>
               <Link href="/danh-muc">Xem tất cả →</Link>
             </div>
-            <Link className="sports-lead" href={`/noi-dung/${lead.id}`}>
-              {lead.image_url ? (
-                <img src={lead.image_url} alt="" />
-              ) : (
-                <div className="lead-placeholder">BX</div>
-              )}
-              <div className="lead-copy">
-                <span className="tag">
-                  {lead.source_name || "BaoTheX"}
-                  {scorelineFrom(lead) ? ` · TỶ SỐ ${scorelineFrom(lead)}` : ""}
-                </span>
-                <StorySignals item={lead} />
-                <h3>{lead.title}</h3>
-                <p>{lead.summary || lead.excerpt || "Tin thể thao đang được biên tập."}</p>
-                <b>Đọc bài →</b>
+            {lead ? (
+              <Link className="sports-lead" href={`/noi-dung/${lead.id}`}>
+                {lead.image_url ? (
+                  <img src={lead.image_url} alt="" />
+                ) : (
+                  <div className="lead-placeholder">BX</div>
+                )}
+                <div className="lead-copy">
+                  <span className="tag">
+                    {lead.source_name || "BaoTheX"}
+                    {scorelineFrom(lead) ? ` · TỶ SỐ ${scorelineFrom(lead)}` : ""}
+                  </span>
+                  <StorySignals item={lead} />
+                  <h3>{lead.title}</h3>
+                  <p>{lead.summary || lead.excerpt || "Tin thể thao đang được biên tập."}</p>
+                  <b>Đọc bài →</b>
+                </div>
+              </Link>
+            ) : followingOnly ? (
+              <div className="personal-feed-empty">
+                <span>Chưa có bài phù hợp</span>
+                <h3>Chọn ít nhất một chủ đề để tạo dòng tin riêng.</h3>
+                <p>
+                  Bạn có thể theo dõi Thể hình, Thể thao điện tử, Bóng rổ hoặc bất kỳ môn nào mình
+                  quan tâm.
+                </p>
+                <Link className="btn ember" href="/cai-dat">
+                  Chọn chủ đề theo dõi
+                </Link>
               </div>
-            </Link>
+            ) : null}
             <div className="secondary-leads">
               {secondary.map((item) => (
                 <NewsTile item={item} key={item.id} />

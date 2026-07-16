@@ -23,6 +23,7 @@ export function AnalysisDesk() {
   const [message, setMessage] = useState("");
   const [editor, setEditor] = useState<{
     id: number;
+    clusterID: number;
     title: string;
     summary: string;
     body: string;
@@ -53,19 +54,29 @@ export function AnalysisDesk() {
     await load();
   }
 
-  async function publish(contentID: number) {
-    if (!window.confirm("Xác nhận bạn đã đọc, sửa và chịu trách nhiệm xuất bản bài này?")) return;
-    const response = await fetch(`${API}/api/v1/admin/content/${contentID}`, {
-      method: "PATCH",
+  // publishCandidate flips the reviewed draft to ready AND marks the candidate
+  // published, so the piece appears in the public "Góc nhìn" section.
+  async function publishCandidate(clusterID: number): Promise<boolean> {
+    const response = await fetch(`${API}/api/v1/admin/analysis-candidates/${clusterID}/publish`, {
+      method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "ready" }),
     });
-    setMessage(response.ok ? "Bài đã được biên tập viên xuất bản." : "Không thể xuất bản bài.");
-    if (response.ok) await load();
+    if (!response.ok) {
+      setMessage("Không thể xuất bản. Bản nháp phải đang ở trạng thái chờ duyệt.");
+      return false;
+    }
+    return true;
   }
 
-  async function openEditor(contentID: number) {
+  async function publish(clusterID: number) {
+    if (!window.confirm("Xác nhận bạn đã đọc, sửa và chịu trách nhiệm xuất bản bài này?")) return;
+    if (await publishCandidate(clusterID)) {
+      setMessage("Bài đã lên mục Góc nhìn.");
+      await load();
+    }
+  }
+
+  async function openEditor(contentID: number, clusterID: number) {
     const response = await fetch(`${API}/api/v1/admin/content/${contentID}`, {
       credentials: "include",
     });
@@ -74,6 +85,7 @@ export function AnalysisDesk() {
     const data = json.data ?? json;
     setEditor({
       id: contentID,
+      clusterID,
       title: data.item.title || "",
       summary: data.item.summary || "",
       body: data.body?.vietnamese_body || data.body?.original_body || "",
@@ -82,6 +94,8 @@ export function AnalysisDesk() {
 
   async function saveEditor(publishNow: boolean) {
     if (!editor) return;
+    // Always persist edits as a draft first, so the published version reflects
+    // the editor's changes.
     const response = await fetch(`${API}/api/v1/admin/content/${editor.id}`, {
       method: "PATCH",
       credentials: "include",
@@ -90,20 +104,17 @@ export function AnalysisDesk() {
         title: editor.title,
         summary: editor.summary,
         body: editor.body,
-        status: publishNow ? "ready" : "needs_review",
+        status: "needs_review",
       }),
     });
-    setMessage(
-      response.ok
-        ? publishNow
-          ? "Bài đã được xuất bản."
-          : "Đã lưu bản biên tập."
-        : "Không thể lưu bài.",
-    );
-    if (response.ok) {
-      setEditor(null);
-      await load();
+    if (!response.ok) {
+      setMessage("Không thể lưu bài.");
+      return;
     }
+    if (publishNow && !(await publishCandidate(editor.clusterID))) return;
+    setMessage(publishNow ? "Bài đã lên mục Góc nhìn." : "Đã lưu bản biên tập.");
+    setEditor(null);
+    await load();
   }
 
   return (
@@ -181,11 +192,22 @@ export function AnalysisDesk() {
           <div className="candidate-actions">
             {item.draft_content_id ? (
               <>
-                <button className="quiet" onClick={() => void openEditor(item.draft_content_id!)}>
+                <button
+                  className="quiet"
+                  onClick={() => void openEditor(item.draft_content_id!, item.cluster_id)}
+                >
                   Đọc & sửa bản nháp
                 </button>
                 {item.status === "needs_review" ? (
-                  <button onClick={() => void publish(item.draft_content_id!)}>Duyệt nhanh</button>
+                  <button
+                    className="quiet"
+                    onClick={() => void action(item.cluster_id, "generate")}
+                  >
+                    Tạo lại bản đầy đủ
+                  </button>
+                ) : null}
+                {item.status === "needs_review" ? (
+                  <button onClick={() => void publish(item.cluster_id)}>Duyệt nhanh</button>
                 ) : null}
               </>
             ) : (

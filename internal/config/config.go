@@ -31,13 +31,11 @@ type Config struct {
 	TelegramPolling       bool
 
 	// Media / TTS
-	TTSAPIKey          string
+	TTSAPIKeys         []string // dedicated audio-brief key pool (falls back to LLM keys)
 	TTSModel           string
 	TTSVoice           string
 	MediaStorageDir    string
 	MediaPublicBaseURL string
-	FFmpegPath         string
-	VideoFontFile      string
 
 	// Web Push
 	WebPushPublicKey  string
@@ -52,7 +50,8 @@ type Config struct {
 	PremiumMonthlyPrice int
 
 	// LLM
-	LLMAPIKey          string
+	LLMAPIKey          string   // first key; kept for single-key callers (e.g. TTS default)
+	LLMAPIKeys         []string // full rotation pool: tried in order, next on quota exhaustion
 	LLMBaseURL         string
 	LLMModel           string
 	LLMDailyBudgetUSD  float64
@@ -67,6 +66,21 @@ type Config struct {
 // Load reads configuration from the process environment, applying defaults.
 // It returns an error only for values that are required and cannot be defaulted.
 func Load() (*Config, error) {
+	// LLM_API_KEY may hold several comma-separated keys; the summarizer rotates
+	// through them when one is rate-limited/quota-exhausted.
+	llmKeys := splitCSV(env("LLM_API_KEY", ""))
+	firstLLMKey := ""
+	if len(llmKeys) > 0 {
+		firstLLMKey = llmKeys[0]
+	}
+
+	// TTS uses its own key pool so the audio brief has reserved quota; when
+	// TTS_API_KEY is unset it falls back to sharing the LLM keys.
+	ttsKeys := splitCSV(env("TTS_API_KEY", ""))
+	if len(ttsKeys) == 0 {
+		ttsKeys = llmKeys
+	}
+
 	c := &Config{
 		DatabaseURL:           env("DATABASE_URL", ""),
 		SessionSecret:         env("SESSION_SECRET", ""),
@@ -79,13 +93,11 @@ func Load() (*Config, error) {
 		TelegramWebhookSecret: env("TELEGRAM_WEBHOOK_SECRET", ""),
 		TelegramBotUsername:   env("TELEGRAM_BOT_USERNAME", "RepWireBot"),
 		TelegramPolling:       envBool("TELEGRAM_POLLING", strings.Contains(env("PUBLIC_BASE_URL", ""), "localhost")),
-		TTSAPIKey:             env("TTS_API_KEY", env("LLM_API_KEY", "")),
+		TTSAPIKeys:            ttsKeys,
 		TTSModel:              env("TTS_MODEL", "gemini-2.5-flash-preview-tts"),
 		TTSVoice:              env("TTS_VOICE", "Erinome"),
 		MediaStorageDir:       env("MEDIA_STORAGE_DIR", "./var/media"),
 		MediaPublicBaseURL:    env("MEDIA_PUBLIC_BASE_URL", env("PUBLIC_BASE_URL", "http://localhost:3000")),
-		FFmpegPath:            env("FFMPEG_PATH", "ffmpeg"),
-		VideoFontFile:         env("VIDEO_FONT_FILE", "C:/Windows/Fonts/arialbd.ttf"),
 		WebPushPublicKey:      env("WEB_PUSH_PUBLIC_KEY", ""),
 		WebPushPrivateKey:     env("WEB_PUSH_PRIVATE_KEY", ""),
 		WebPushSubject:        env("WEB_PUSH_SUBJECT", "mailto:admin@example.com"),
@@ -94,7 +106,8 @@ func Load() (*Config, error) {
 		SePayBaseURL:          env("SEPAY_BASE_URL", "https://pay.sepay.vn"),
 		SePayIPNSecretKey:     env("SEPAY_IPN_SECRET_KEY", ""),
 		PremiumMonthlyPrice:   envInt("PREMIUM_MONTHLY_PRICE", 39000),
-		LLMAPIKey:             env("LLM_API_KEY", ""),
+		LLMAPIKey:             firstLLMKey,
+		LLMAPIKeys:            llmKeys,
 		LLMBaseURL:            env("LLM_BASE_URL", "https://api.anthropic.com/v1/messages"),
 		LLMModel:              env("LLM_MODEL", "claude-haiku-4-5-20251001"),
 		LLMDailyBudgetUSD:     envFloat("LLM_DAILY_BUDGET_USD", 5),

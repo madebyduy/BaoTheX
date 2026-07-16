@@ -26,6 +26,7 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 	if edition != "evening" {
 		edition = "morning"
 	}
+	h.Log.Info("audio generation started", "date", day.Format("2006-01-02"), "edition", edition)
 	if h.TTS == nil || !h.TTS.Enabled() {
 		return fmt.Errorf("audio brief: TTS not configured")
 	}
@@ -40,6 +41,7 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 	}
 	items := selectMorningStories(candidates, 14)
 	if len(items) < 3 {
+		h.Log.Warn("audio generation skipped: not enough Vietnamese stories", "date", day.Format("2006-01-02"), "edition", edition, "ready_articles", len(candidates), "selected", len(items))
 		return fmt.Errorf("audio brief: not enough ready stories")
 	}
 	var title, script string
@@ -55,10 +57,15 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 	output := filepath.Join(h.MediaDir, filepath.FromSlash(relative))
 	duration, err := h.TTS.Render(ctx, script, output)
 	if err != nil {
+		h.Log.Error("audio render failed", "date", day.Format("2006-01-02"), "edition", edition, "err", err)
 		return err
 	}
 	publicURL := strings.TrimRight(h.PublicBaseURL, "/") + "/media/" + relative
-	return h.DB.Engagement.SaveAudioBrief(ctx, day, edition, title, script, publicURL, duration, ids)
+	if err := h.DB.Engagement.SaveAudioBrief(ctx, day, edition, title, script, publicURL, duration, ids); err != nil {
+		return err
+	}
+	h.Log.Info("audio generation completed", "date", day.Format("2006-01-02"), "edition", edition, "duration_seconds", duration, "stories", len(ids))
+	return nil
 }
 
 func buildEveningScript(day time.Time, items []domain.ContentItem) (string, string, []int64) {
@@ -176,6 +183,13 @@ func itemSynopsis(item domain.ContentItem) string {
 		return *item.Excerpt
 	}
 	return ""
+}
+
+// looksVietnamese reports whether text contains Vietnamese-specific letters, a
+// cheap heuristic for gating content into the Vietnamese audio brief.
+func looksVietnamese(text string) bool {
+	return strings.ContainsAny(strings.ToLower(text),
+		"ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ")
 }
 
 func sourceForSpeech(source string) string {

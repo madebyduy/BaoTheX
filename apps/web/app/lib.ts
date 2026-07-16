@@ -12,6 +12,7 @@ export type Item = {
   status?: string;
   view_count?: number;
   save_count?: number;
+  final_score?: number;
   language?: string;
   story_cluster_id?: number;
   cluster_source_count?: number;
@@ -40,6 +41,7 @@ export type Topic = {
   slug: string;
   name: string;
   description?: string;
+  category?: string;
   follower_count?: number;
 };
 export type Source = {
@@ -62,14 +64,32 @@ export type Entity = {
   follower_count?: number;
 };
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
-export async function api<T>(path: string, fallback: T, revalidate?: number): Promise<T> {
+// Public content is cached and revalidated in the background (ISR). Without a
+// default the whole site refetched every request, adding a Tokyo round-trip per
+// call. Pass an explicit revalidate to tune, or 0 to always hit the API.
+export async function api<T>(path: string, fallback: T, revalidate = 60): Promise<T> {
   try {
     const r = await fetch(
       `${API}/api/v1${path}`,
-      revalidate ? { next: { revalidate } } : { cache: "no-store" },
+      revalidate > 0 ? { next: { revalidate } } : { cache: "no-store" },
     );
     if (!r.ok) return fallback;
     const json = await r.json();
+    return (json.data ?? json) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function apiWithCookie<T>(path: string, fallback: T, cookie: string): Promise<T> {
+  if (!cookie) return fallback;
+  try {
+    const response = await fetch(`${API}/api/v1${path}`, {
+      cache: "no-store",
+      headers: { cookie },
+    });
+    if (!response.ok) return fallback;
+    const json = await response.json();
     return (json.data ?? json) as T;
   } catch {
     return fallback;

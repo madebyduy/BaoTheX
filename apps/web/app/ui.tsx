@@ -1,7 +1,16 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { type Item, typeLabel } from "./lib";
+
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+
+type HeaderUser = {
+  email: string;
+  display_name?: string;
+  role?: string;
+};
 
 export function SiteHeader() {
   const path = usePathname();
@@ -32,6 +41,7 @@ export function SiteHeader() {
         <Link className="premium-link" href="/premium">
           Premium
         </Link>
+        <AccountNav path={path} />
         <Link className="btn ember" href="/dang-nhap">
           Đăng nhập
         </Link>
@@ -47,6 +57,70 @@ export function SiteHeader() {
         </div>
       </div>
     </header>
+  );
+}
+
+function AccountNav({ path }: { path: string }) {
+  const [user, setUser] = useState<HeaderUser | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`${API}/api/v1/auth/me`, { credentials: "include", cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
+      .then((json) => {
+        if (!cancelled) setUser(json.data ?? json);
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  async function logout() {
+    await fetch(`${API}/api/v1/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => null);
+    setUser(null);
+    window.location.href = "/";
+  }
+
+  if (loading) {
+    return <span className="account-pill skeleton-pill" aria-label="Dang kiem tra dang nhap" />;
+  }
+
+  if (!user) {
+    return (
+      <Link className="btn ember header-login" href="/dang-nhap">
+        Đăng nhập
+      </Link>
+    );
+  }
+
+  const name = user.display_name || user.email.split("@")[0] || "Tài khoản";
+
+  return (
+    <div className="header-account" aria-label="Tai khoan">
+      {user.role === "admin" ? (
+        <Link className="account-admin" href="/admin">
+          Admin
+        </Link>
+      ) : null}
+      <Link className="account-pill" href="/cai-dat" title={user.email}>
+        <span className="avatar">{name[0]?.toUpperCase()}</span>
+        <span>{name}</span>
+      </Link>
+      <button className="logout-btn" type="button" onClick={logout}>
+        Thoát
+      </button>
+    </div>
   );
 }
 export function Card({ item }: { item: Item }) {

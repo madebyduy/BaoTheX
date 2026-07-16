@@ -22,7 +22,7 @@ func (h *Handlers) handleGenerateAnalysis(ctx context.Context, j *domain.Job) er
 	if h.Summarizer == nil || !h.Summarizer.Enabled() {
 		return fail(fmt.Errorf("cluster analysis: LLM is not configured"))
 	}
-	if ok, err := h.Summarizer.BudgetOK(ctx); err != nil {
+	if ok, err := h.Summarizer.EditorialBudgetOK(ctx); err != nil {
 		return fail(err)
 	} else if !ok {
 		return fail(fmt.Errorf("cluster analysis: daily LLM budget exceeded"))

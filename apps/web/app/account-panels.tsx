@@ -46,6 +46,8 @@ export function AccountOverview() {
 
 type Preferences = {
   daily_enabled: boolean;
+  audio_enabled: boolean;
+  evening_brief_enabled: boolean;
   weekly_research: boolean;
   follow_alerts: boolean;
   highlights_only: boolean;
@@ -53,6 +55,8 @@ type Preferences = {
 };
 const defaults: Preferences = {
   daily_enabled: true,
+  audio_enabled: true,
+  evening_brief_enabled: true,
   weekly_research: true,
   follow_alerts: true,
   highlights_only: false,
@@ -95,6 +99,22 @@ export function NotificationSettings() {
             onChange={() => toggle("daily_enabled")}
           />{" "}
           Nhận bản tin buổi sáng
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={prefs.audio_enabled}
+            onChange={() => toggle("audio_enabled")}
+          />{" "}
+          Premium: nhận audio Thể thao 6h qua Telegram
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={prefs.evening_brief_enabled}
+            onChange={() => toggle("evening_brief_enabled")}
+          />{" "}
+          Premium: nhận audio Thể thao 20h qua Telegram
         </label>
         <label>
           <input
