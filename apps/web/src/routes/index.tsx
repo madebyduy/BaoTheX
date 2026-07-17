@@ -240,10 +240,18 @@ function Index() {
             <span className="text-ink">Thứ Tư, 15 tháng 7, 2026</span>
           </div>
           <div className="flex items-center gap-5 font-mono text-[11px] uppercase tracking-widest">
-            <span><b className="text-ember">47</b> mới</span>
-            <span><b>12</b> nghiên cứu</span>
-            <span><b>18</b> video</span>
-            <span><b>9</b> podcast</span>
+            <span>
+              <b className="text-ember">47</b> mới
+            </span>
+            <span>
+              <b>12</b> nghiên cứu
+            </span>
+            <span>
+              <b>18</b> video
+            </span>
+            <span>
+              <b>9</b> podcast
+            </span>
             <span className="text-muted-foreground">3.2k lượt đọc · 24 giờ qua</span>
           </div>
         </div>
@@ -253,18 +261,20 @@ function Index() {
       <div className="rule-b">
         <div className="mx-auto flex max-w-[1400px] items-center gap-3 overflow-x-auto px-6 py-3">
           <span className="label-eyebrow text-muted-foreground">LỌC —</span>
-          {(["Tất cả", "Bài viết", "Nghiên cứu", "Video", "Podcast", "Sự kiện"] as const).map((f, i) => (
-            <button
-              key={f}
-              className={`label-eyebrow shrink-0 rounded-sm px-3 py-1.5 transition ${
-                i === 0
-                  ? "bg-ink text-paper shadow-[2px_2px_0_var(--color-ember)]"
-                  : "border border-rule text-muted-foreground hover:border-ink hover:text-foreground"
-              }`}
-            >
-              {f}
-            </button>
-          ))}
+          {(["Tất cả", "Bài viết", "Nghiên cứu", "Video", "Podcast", "Sự kiện"] as const).map(
+            (f, i) => (
+              <button
+                key={f}
+                className={`label-eyebrow shrink-0 rounded-sm px-3 py-1.5 transition ${
+                  i === 0
+                    ? "bg-ink text-paper shadow-[2px_2px_0_var(--color-ember)]"
+                    : "border border-rule text-muted-foreground hover:border-ink hover:text-foreground"
+                }`}
+              >
+                {f}
+              </button>
+            ),
+          )}
           <span className="mx-3 h-5 w-px bg-rule" />
           <span className="label-eyebrow text-muted-foreground">SẮP XẾP —</span>
           <button className="label-eyebrow shrink-0 rounded-sm border border-ink px-3 py-1.5">
@@ -358,7 +368,10 @@ function Index() {
             </div>
             <h2 className="mt-5 font-display text-[2.6rem] font-black leading-[1.05] tracking-[-0.02em]">
               {feed[0].title.split(" — ")[0]}
-              <span className="italic font-normal text-ember"> — {feed[0].title.split(" — ")[1]}</span>
+              <span className="italic font-normal text-ember">
+                {" "}
+                — {feed[0].title.split(" — ")[1]}
+              </span>
             </h2>
             <p className="drop-cap mt-5 max-w-3xl font-sans text-[16px] leading-[1.65] text-foreground/90">
               {feed[0].excerpt}
@@ -370,9 +383,7 @@ function Index() {
                     key={p}
                     className="relative border-l-2 border-lime bg-secondary/60 px-3 py-2.5 text-[13px] leading-snug"
                   >
-                    <span className="mr-1 font-mono text-[10px] text-ember">
-                      0{i + 1}·
-                    </span>
+                    <span className="mr-1 font-mono text-[10px] text-ember">0{i + 1}·</span>
                     {p}
                   </li>
                 ))}
@@ -413,7 +424,10 @@ function Index() {
           {/* Danh sách dày */}
           <ul className="divide-y divide-rule">
             {feed.slice(1).map((item, idx) => (
-              <li key={item.title} className="group grid grid-cols-12 gap-4 py-6 transition hover:bg-cream/60">
+              <li
+                key={item.title}
+                className="group grid grid-cols-12 gap-4 py-6 transition hover:bg-cream/60"
+              >
                 <div className="col-span-1 font-mono text-xs text-muted-foreground">
                   <span className="text-ember">§</span>
                   <br />
@@ -487,11 +501,15 @@ function Index() {
               <span className="ornament flex-1 text-lime/40" />
             </div>
             <p className="mt-3 font-display text-[1.35rem] leading-[1.2] tracking-tight">
-              Bảy nội dung chọn lọc theo mục tiêu của bạn — <span className="italic text-lime">gửi mỗi sáng sớm</span>.
+              Bảy nội dung chọn lọc theo mục tiêu của bạn —{" "}
+              <span className="italic text-lime">gửi mỗi sáng sớm</span>.
             </p>
             <div className="mt-4 flex flex-wrap gap-1.5">
               {["Phì đại cơ", "Powerlifting", "Dinh dưỡng"].map((t) => (
-                <span key={t} className="rounded-full bg-lime/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-lime">
+                <span
+                  key={t}
+                  className="rounded-full bg-lime/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-lime"
+                >
                   {t}
                 </span>
               ))}
@@ -518,7 +536,10 @@ function Index() {
                   <span className="font-display text-4xl font-black leading-[0.85] text-ember">
                     {String(i + 1).padStart(2, "0")}
                   </span>
-                  <a href="#" className="font-heading text-[14px] font-semibold leading-snug hover:text-ember">
+                  <a
+                    href="#"
+                    className="font-heading text-[14px] font-semibold leading-snug hover:text-ember"
+                  >
                     {t}
                   </a>
                 </li>
@@ -543,7 +564,9 @@ function Index() {
           <div>
             <div className="mb-3 flex items-baseline justify-between rule-double-b pb-2">
               <span className="label-eyebrow">Đang theo dõi</span>
-              <a href="#" className="label-eyebrow text-ember">Quản lý</a>
+              <a href="#" className="label-eyebrow text-ember">
+                Quản lý
+              </a>
             </div>
             <ul className="space-y-0">
               {followedSources.map((s) => (
@@ -577,7 +600,8 @@ function Index() {
             <div className="absolute right-0 top-0 h-full w-1/3 dotgrid opacity-10" />
             <div className="label-eyebrow text-ember">Bàn nghiên cứu</div>
             <p className="mt-2 font-display text-[1.05rem] leading-snug">
-              Tuần này: <span className="italic">4 phân tích gộp, 11 RCT, 6 bài tổng quan</span> lập chỉ mục từ EuropePMC.
+              Tuần này: <span className="italic">4 phân tích gộp, 11 RCT, 6 bài tổng quan</span> lập
+              chỉ mục từ EuropePMC.
             </p>
             <div className="mt-4 grid grid-cols-3 gap-2 font-mono text-[11px]">
               {[
@@ -626,11 +650,21 @@ function Index() {
               </div>
             </div>
             <div className="flex gap-6 font-mono text-[11px] uppercase tracking-widest text-paper/70">
-              <a href="#" className="hover:text-lime">Giới thiệu</a>
-              <a href="#" className="hover:text-lime">Nguồn</a>
-              <a href="#" className="hover:text-lime">Phương pháp</a>
-              <a href="#" className="hover:text-lime">Bot Telegram</a>
-              <a href="#" className="hover:text-lime">RSS</a>
+              <a href="#" className="hover:text-lime">
+                Giới thiệu
+              </a>
+              <a href="#" className="hover:text-lime">
+                Nguồn
+              </a>
+              <a href="#" className="hover:text-lime">
+                Phương pháp
+              </a>
+              <a href="#" className="hover:text-lime">
+                Bot Telegram
+              </a>
+              <a href="#" className="hover:text-lime">
+                RSS
+              </a>
             </div>
           </div>
           <div className="mt-4 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-paper/40">

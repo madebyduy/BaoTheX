@@ -46,9 +46,9 @@
   --radius: 0.25rem;
 
   /* Paper & ink editorial palette */
-  --paper: oklch(0.972 0.012 82);        /* warm cream paper */
-  --cream: oklch(0.955 0.020 82);        /* slightly deeper cream for blocks */
-  --ink: oklch(0.155 0.022 55);          /* warm near-black */
+  --paper: oklch(0.972 0.012 82); /* warm cream paper */
+  --cream: oklch(0.955 0.02 82); /* slightly deeper cream for blocks */
+  --ink: oklch(0.155 0.022 55); /* warm near-black */
   --rule: oklch(0.155 0.022 55 / 0.16);
 
   --background: var(--paper);
@@ -67,9 +67,9 @@
   --accent: oklch(0.92 0.018 82);
   --accent-foreground: var(--ink);
 
-  --ember: oklch(0.64 0.20 34);          /* rich ember-brick */
+  --ember: oklch(0.64 0.2 34); /* rich ember-brick */
   --ember-foreground: oklch(0.99 0.01 85);
-  --lime: oklch(0.86 0.19 118);          /* electric lime */
+  --lime: oklch(0.86 0.19 118); /* electric lime */
 
   --destructive: oklch(0.55 0.22 27);
   --destructive-foreground: oklch(0.99 0 0);
@@ -93,7 +93,9 @@
 }
 
 @layer base {
-  * { border-color: var(--color-border); }
+  * {
+    border-color: var(--color-border);
+  }
   html {
     background:
       radial-gradient(ellipse 80% 40% at 20% 0%, oklch(0.66 0.21 38 / 0.05), transparent 60%),
@@ -109,8 +111,17 @@
     -webkit-font-smoothing: antialiased;
     background: transparent;
   }
-  h1, h2, h3, h4 { font-family: var(--font-display); font-feature-settings: "cv11"; }
-  ::selection { background: var(--color-ember); color: var(--color-ember-foreground); }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    font-feature-settings: "cv11";
+  }
+  ::selection {
+    background: var(--color-ember);
+    color: var(--color-ember-foreground);
+  }
 }
 
 @utility label-eyebrow {
@@ -122,8 +133,12 @@
   line-height: 1;
 }
 
-@utility rule-t { border-top: 1px solid var(--color-rule); }
-@utility rule-b { border-bottom: 1px solid var(--color-rule); }
+@utility rule-t {
+  border-top: 1px solid var(--color-rule);
+}
+@utility rule-b {
+  border-bottom: 1px solid var(--color-rule);
+}
 
 @utility rule-double-b {
   border-bottom: 3px double var(--color-ink);
@@ -136,18 +151,17 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image:
-    radial-gradient(circle at 1px 1px, oklch(0.155 0.022 55 / 0.08) 1px, transparent 0);
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    oklch(0.155 0.022 55 / 0.08) 1px,
+    transparent 0
+  );
   background-size: 4px 4px;
   mix-blend-mode: multiply;
 }
 
 @utility stripes {
-  background-image: repeating-linear-gradient(
-    135deg,
-    var(--color-ink) 0 1px,
-    transparent 1px 6px
-  );
+  background-image: repeating-linear-gradient(135deg, var(--color-ink) 0 1px, transparent 1px 6px);
 }
 
 @utility dotgrid {
@@ -177,15 +191,20 @@
 }
 
 @keyframes marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
 }
 
 @utility ornament {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  &::before, &::after {
+  &::before,
+  &::after {
     content: "";
     height: 1px;
     width: 1.5rem;
