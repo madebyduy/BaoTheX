@@ -112,15 +112,16 @@ func (r *UserRepo) DeleteSession(ctx context.Context, tokenHash string) error {
 // Save upserts a saved item.
 func (r *UserRepo) Save(ctx context.Context, userID, contentID int64, collectionID *int64, note *string) error {
 	return r.db.WithTx(ctx, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `
+		var inserted bool
+		err := tx.QueryRow(ctx, `
 			INSERT INTO saved_items (user_id, content_id, collection_id, note)
 			VALUES ($1,$2,$3,$4)
-			ON CONFLICT (user_id, content_id) DO UPDATE SET collection_id=EXCLUDED.collection_id, note=EXCLUDED.note`,
-			userID, contentID, collectionID, note)
+			ON CONFLICT (user_id, content_id) DO UPDATE SET collection_id=EXCLUDED.collection_id, note=EXCLUDED.note
+			RETURNING (xmax=0)`, userID, contentID, collectionID, note).Scan(&inserted)
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() > 0 {
+		if inserted {
 			_, err = tx.Exec(ctx, `UPDATE content_items SET save_count=save_count+1 WHERE id=$1`, contentID)
 		}
 		return err
@@ -139,6 +140,13 @@ func (r *UserRepo) Unsave(ctx context.Context, userID, contentID int64) error {
 		}
 		return err
 	})
+}
+
+// IsSaved returns the authoritative bookmark state for interactive readers.
+func (r *UserRepo) IsSaved(ctx context.Context, userID, contentID int64) (bool, error) {
+	var saved bool
+	err := r.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM saved_items WHERE user_id=$1 AND content_id=$2)`, userID, contentID).Scan(&saved)
+	return saved, err
 }
 
 // ListSaved returns a user's saved content items (optionally by collection).

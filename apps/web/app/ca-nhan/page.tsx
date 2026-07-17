@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Footer, PageTitle } from "../ui";
 import { AccountOverview } from "../account-panels";
+import { FanPassportPanel } from "../fan-passport";
 export default function Page() {
   return (
     <>
@@ -11,6 +12,7 @@ export default function Page() {
           description="Quản lý dòng tin, chủ đề theo dõi và các nội dung đã lưu."
         />
         <AccountOverview />
+        <FanPassportPanel />
         <div className="topic-grid section">
           <Link href="/luu" className="topic">
             <strong>Thư viện đã lưu</strong>

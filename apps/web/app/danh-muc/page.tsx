@@ -1,7 +1,15 @@
-import { api, demoItems, type Item } from "../lib";
+import { api, demoItems, type Item, type Source } from "../lib";
 import { Footer, ItemGrid, PageTitle } from "../ui";
-export default async function Page() {
-  const items = await api<Item[]>("/content?per_page=20&sort=recent", demoItems);
+type Search = Promise<{ sort?: string; source?: string }>;
+export default async function Page({ searchParams }: { searchParams: Search }) {
+  const params = await searchParams;
+  const sort = params.sort === "top" ? "top" : "recent";
+  const query = new URLSearchParams({ per_page: "20", sort });
+  if (/^\d+$/.test(params.source || "")) query.set("source", params.source!);
+  const [items, sources] = await Promise.all([
+    api<Item[]>(`/content?${query}`, demoItems),
+    api<Source[]>("/sources", []),
+  ]);
   return (
     <>
       <main className="wrap">
@@ -13,9 +21,32 @@ export default async function Page() {
         <div className="layout">
           <aside className="side">
             <span className="eyebrow">Bộ lọc</span>
-            <a href="/danh-muc">Mới nhất</a>
-            <a href="/danh-muc?sort=top">Nổi bật</a>
+            <a
+              className={sort === "recent" ? "active" : ""}
+              href={`/danh-muc?sort=recent${params.source ? `&source=${params.source}` : ""}`}
+            >
+              Mới nhất
+            </a>
+            <a
+              className={sort === "top" ? "active" : ""}
+              href={`/danh-muc?sort=top${params.source ? `&source=${params.source}` : ""}`}
+            >
+              Nổi bật
+            </a>
             <a href="/video">Video</a>
+            <form action="/danh-muc" className="source-filter">
+              <input type="hidden" name="sort" value={sort} />
+              <label htmlFor="source">Nguồn</label>
+              <select id="source" name="source" defaultValue={params.source || ""}>
+                <option value="">Tất cả nguồn</option>
+                {sources.map((source) => (
+                  <option value={source.id} key={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+              <button type="submit">Áp dụng</button>
+            </form>
           </aside>
           <section>
             <ItemGrid items={items} />

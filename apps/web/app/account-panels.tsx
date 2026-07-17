@@ -48,7 +48,6 @@ type Preferences = {
   daily_enabled: boolean;
   audio_enabled: boolean;
   evening_brief_enabled: boolean;
-  weekly_research: boolean;
   follow_alerts: boolean;
   highlights_only: boolean;
   daily_max_items: number;
@@ -57,7 +56,6 @@ const defaults: Preferences = {
   daily_enabled: true,
   audio_enabled: true,
   evening_brief_enabled: true,
-  weekly_research: true,
   follow_alerts: true,
   highlights_only: false,
   daily_max_items: 5,
@@ -115,14 +113,6 @@ export function NotificationSettings() {
             onChange={() => toggle("evening_brief_enabled")}
           />{" "}
           Premium: nhận audio Thể thao 20h qua Telegram
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={prefs.weekly_research}
-            onChange={() => toggle("weekly_research")}
-          />{" "}
-          Nhận nghiên cứu nổi bật hàng tuần
         </label>
         <label>
           <input

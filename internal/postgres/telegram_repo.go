@@ -181,19 +181,44 @@ func (r *TelegramRepo) UsersDueForDaily(ctx context.Context) ([]int64, error) {
 	return scanIDs(rows)
 }
 
-// UsersDueForWeekly returns user ids whose local weekday matches weekly_dow.
-func (r *TelegramRepo) UsersDueForWeekly(ctx context.Context) ([]int64, error) {
+// FollowAlertCooldown is the minimum gap between two follow alerts to one user.
+//
+// A follow alert fires on news rather than on a clock, which is exactly what
+// makes it dangerous: a user following "Bóng đá quốc tế" during a World Cup
+// would otherwise be pinged every few minutes by an aggregator that ingests
+// dozens of articles an hour. The daily brief is safe because it is rationed by
+// definition; this is not, so the ration is explicit. Six hours means at most
+// four a day, and in practice far fewer, since quiet hours cover the night.
+const FollowAlertCooldown = 6 * time.Hour
+
+// UsersDueForFollowAlert returns users who have follow alerts switched on, are
+// connected to the bot, are not inside their quiet hours, and have not been sent
+// an alert within FollowAlertCooldown.
+//
+// The quiet window is a pair of local hours and it usually wraps midnight
+// (22→07 by default), so it cannot be expressed as a simple BETWEEN: when start
+// is greater than end the quiet period is "at or after start OR before end".
+// Equal values mean no quiet hours at all rather than a 24-hour blackout.
+func (r *TelegramRepo) UsersDueForFollowAlert(ctx context.Context) ([]int64, error) {
 	rows, err := r.db.Pool.Query(ctx, `
 		SELECT u.id FROM users u
 		JOIN notification_preferences p ON p.user_id=u.id
 		JOIN telegram_connections t ON t.user_id=u.id
-		WHERE p.weekly_research
-		  AND EXTRACT(isodow FROM now() AT TIME ZONE u.timezone) = p.weekly_dow
-		  AND EXTRACT(hour FROM now() AT TIME ZONE u.timezone) = p.daily_hour
+		WHERE p.follow_alerts
+		  AND NOT (
+		      CASE
+		        WHEN p.quiet_start = p.quiet_end THEN FALSE
+		        WHEN p.quiet_start < p.quiet_end THEN
+		          EXTRACT(hour FROM now() AT TIME ZONE u.timezone) >= p.quiet_start
+		          AND EXTRACT(hour FROM now() AT TIME ZONE u.timezone) < p.quiet_end
+		        ELSE
+		          EXTRACT(hour FROM now() AT TIME ZONE u.timezone) >= p.quiet_start
+		          OR EXTRACT(hour FROM now() AT TIME ZONE u.timezone) < p.quiet_end
+		      END)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM digest_deliveries d
-		      WHERE d.user_id=u.id AND d.kind='weekly_research' AND d.error IS NULL
-		        AND d.sent_at > now() - interval '6 days')`)
+		      WHERE d.user_id=u.id AND d.kind='follow_alert' AND d.error IS NULL
+		        AND d.sent_at > now() - $1::interval)`, FollowAlertCooldown)
 	if err != nil {
 		return nil, err
 	}

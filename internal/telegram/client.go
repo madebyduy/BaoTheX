@@ -91,7 +91,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, but
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -132,7 +132,7 @@ func (c *Client) SendAudio(ctx context.Context, chatID int64, audioURL, caption 
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -170,7 +170,7 @@ func (c *Client) SetWebhook(ctx context.Context, url, secret string) error {
 	})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL("setWebhook"), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func (c *Client) DeleteWebhook(ctx context.Context) error {
 	body, _ := json.Marshal(map[string]bool{"drop_pending_updates": false})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL("deleteWebhook"), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return err
 	}
@@ -238,7 +238,7 @@ func (c *Client) getUpdates(ctx context.Context, offset int64) ([]Update, error)
 	})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL("getUpdates"), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -259,6 +259,31 @@ func (c *Client) getUpdates(ctx context.Context, offset int64) ([]Update, error)
 
 func (c *Client) apiURL(method string) string {
 	return "https://api.telegram.org/bot" + c.token + "/" + method
+}
+
+// do performs the request and strips the bot token out of any transport error.
+//
+// Telegram carries the token in the URL path, and net/http reports a failure as
+// *url.Error — which prints the URL it was handed. So one TLS handshake timeout
+// wrote the line:
+//
+//	telegram polling failed err="Post \"https://api.telegram.org/bot<TOKEN>/deleteWebhook\": TLS handshake timeout"
+//
+// A live bot credential, in a log, over a transient network blip. Logs are
+// shipped, kept, and read by people who are not being trusted with the ability
+// to send messages as this bot; the token also outlives the incident that
+// printed it by however long the retention is. Nothing about the error's
+// usefulness depends on it being there.
+//
+// Only transport errors are rewritten. ErrBlocked and the API's own error
+// messages are constructed elsewhere and never contain the token, so errors.Is
+// on them is unaffected.
+func (c *Client) do(req *http.Request) (*http.Response, error) {
+	resp, err := c.http.Do(req)
+	if err != nil && c.token != "" {
+		return nil, fmt.Errorf("%s", strings.ReplaceAll(err.Error(), c.token, "<token-redacted>"))
+	}
+	return resp, err
 }
 
 // EscapeMarkdownV2 escapes the reserved characters for Telegram MarkdownV2.

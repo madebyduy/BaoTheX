@@ -1,13 +1,18 @@
 # BaoTheX
 
-BaoTheX — báo thể thao tổng hợp, theo dõi tin nóng trong ngày từ các nguồn báo chí, video và podcast đáng tin cậy cho người Việt.
+BaoTheX — báo thể thao tổng hợp, theo dõi tin nóng trong ngày từ các nguồn báo chí và video đáng tin cậy cho người Việt.
 
 ## Backend
 
 Sports newsroom: aggregates important daily sports news from Vietnamese and
-international publications, YouTube and podcasts. Users follow sports, people
-and sources, read sourced summaries, save content and receive a personalised
-Telegram brief.
+international publications and YouTube. Users follow sports, people and sources,
+read sourced summaries, save content and receive a personalised Telegram brief.
+
+Two intakes are built and switched off: **podcasts** (retired in migration 0015,
+feeds disabled in 0030 — the surface is gone, so the fetchers were still filling
+a section that no longer exists) and **Europe PMC research** (disabled in 0024 —
+protein-synthesis papers are scholarship, not sports news). Their code, tables
+and 45 archived papers remain; only the intake stopped.
 
 **Stack:** Go (API + worker) · PostgreSQL 16 (DB + queue + full-text search) ·
 Telegram Bot API · Docker Compose. The **Next.js frontend is built separately**
@@ -22,7 +27,7 @@ Telegram Bot API · Docker Compose. The **Next.js frontend is built separately**
 ├── apps/
 │   ├── api/            # Go: HTTP API server (main.go + Dockerfile)
 │   ├── worker/         # Go: scheduler + job pool + fetchers + telegram sender
-│   └── web/            # Next.js (added later — not in this repo yet)
+│   └── web/            # Next.js App Router frontend (app/)
 ├── internal/
 │   ├── config/         # env config loader
 │   ├── logging/        # slog setup
@@ -132,10 +137,15 @@ go run ./tools/apply-migration migrations/0009_engagement_suite.up.sql
    budget) calls the LLM API to produce a paraphrased summary, or the fixed
    8-section research breakdown. Items below the gate go straight to `ready`.
 5. **Feed / homepage** blends 50% general + 30% personal + 20% discovery.
-6. **Telegram** sends a personalised Daily Brief and Weekly Research digest via
-   timezone-aware scheduling, with strict anti-spam thresholds.
-7. **Morning media** renders a narrated audio brief and a short MP4 recap from
-   the highest-ranked Vietnamese stories; both are cached and reused.
+6. **Analysis desk** ranks story clusters by heat (sources, velocity, followers,
+   controversy) and commits to `EDITORIAL_PICKS_PER_DAY` of them, spaced three
+   hours apart from `EDITORIAL_START_HOUR`. Each pick becomes a sourced draft for
+   a human to review; nothing here publishes itself.
+7. **Telegram** sends a personalised Daily Brief on a timezone-aware schedule,
+   plus follow alerts when a topic you follow breaks news — rationed by a
+   six-hour cooldown and your quiet hours, on top of the usual anti-spam floors.
+8. **Morning audio** renders a narrated brief from the highest-ranked Vietnamese
+   stories; it is cached and reused.
 
 The job queue is pure PostgreSQL (`FOR UPDATE SKIP LOCKED`), with exponential
 backoff, a dead-letter state, and a reaper for crashed workers. No Redis/RabbitMQ.
@@ -152,13 +162,13 @@ To enable each capability, set:
 | Capability          | Variables |
 |---------------------|-----------|
 | YouTube ingestion   | `YOUTUBE_API_KEY` |
-| LLM summaries       | `LLM_API_KEY` (+ optional `LLM_MODEL`, `LLM_BASE_URL`, `LLM_DAILY_BUDGET_USD`) |
+| LLM summaries       | `LLM_API_KEY` (+ optional `LLM_MODEL`, `LLM_BASE_URL`, `LLM_DAILY_BUDGET_USD`, and `LLM_INPUT_USD_PER_MTOK` / `LLM_OUTPUT_USD_PER_MTOK` — the budget is computed from these, so set them to match your provider, or to 0 on a free tier) |
 | Telegram digests    | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` |
 | Local Telegram dev  | `TELEGRAM_POLLING=true` |
-| Morning audio       | `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE` |
-| Automatic video    | `FFMPEG_PATH`, `VIDEO_FONT_FILE`, `MEDIA_STORAGE_DIR` |
+| Morning audio       | `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `MEDIA_STORAGE_DIR` |
 | Web Push / PWA      | `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY`, `WEB_PUSH_SUBJECT` |
 | Premium / SePay     | `SEPAY_MERCHANT`, `SEPAY_SECRET_KEY`, `SEPAY_IPN_SECRET_KEY` |
+| Analysis desk       | `EDITORIAL_START_HOUR` (default 9), `EDITORIAL_PICKS_PER_DAY` (default 3) |
 
 Everything runs without these — those pipelines simply stay idle until configured.
 

@@ -10,6 +10,7 @@ import (
 	"repwire/internal/ingest"
 	"repwire/internal/postgres"
 	"repwire/internal/process"
+	"repwire/internal/sportsdata"
 )
 
 // Scheduler enqueues periodic work: source fetches, digest sends, rescoring,
@@ -25,21 +26,41 @@ type Scheduler struct {
 	// translateMaxAge is the age past which a foreign article is abandoned
 	// rather than queued, so the backlog can never outlive the news in it.
 	translateMaxAge time.Duration
-	// dailyPickHour is the hour, Vietnam time, when the day's single hottest
-	// story is chosen and the editorial budget is committed to it.
-	dailyPickHour int
+	// editorialStartHour is the hour, Vietnam time, from which the desk may
+	// commit to a story. Before it, ranking a morning's headlines would mistake
+	// noise for heat.
+	editorialStartHour int
+	// picksPerDay caps how many stories the desk commits to in a day.
+	picksPerDay int
+	sportsSync  *sportsdata.Syncer
+	llmEnabled  bool
+	ttsEnabled  bool
 }
 
 // NewScheduler constructs a Scheduler.
-func NewScheduler(db *postgres.DB, enqueue *Enqueuer, log *slog.Logger, translateMinScore float64, translateMaxAge time.Duration, dailyPickHour int) *Scheduler {
-	return &Scheduler{
-		db:                db,
-		enqueue:           enqueue,
-		log:               log,
-		translateMinScore: translateMinScore,
-		translateMaxAge:   translateMaxAge,
-		dailyPickHour:     dailyPickHour,
+func NewScheduler(db *postgres.DB, enqueue *Enqueuer, log *slog.Logger, translateMinScore float64, translateMaxAge time.Duration, editorialStartHour, picksPerDay int, sportsSync *sportsdata.Syncer) *Scheduler {
+	if picksPerDay < 1 {
+		picksPerDay = 1
 	}
+	return &Scheduler{
+		db:                 db,
+		enqueue:            enqueue,
+		log:                log,
+		translateMinScore:  translateMinScore,
+		translateMaxAge:    translateMaxAge,
+		editorialStartHour: editorialStartHour,
+		picksPerDay:        picksPerDay,
+		sportsSync:         sportsSync,
+		llmEnabled:         true,
+		ttsEnabled:         true,
+	}
+}
+
+// SetGenerationCapabilities prevents a zero-budget worker from even enqueueing
+// jobs that another worker with paid credentials could accidentally consume.
+func (s *Scheduler) SetGenerationCapabilities(llmEnabled, ttsEnabled bool) {
+	s.llmEnabled = llmEnabled
+	s.ttsEnabled = ttsEnabled
 }
 
 // Run starts all scheduling loops until ctx is done.
@@ -47,15 +68,22 @@ func (s *Scheduler) Run(ctx context.Context) {
 	go s.loop(ctx, "fetch", time.Minute, s.enqueueDueFetches)
 	go s.loop(ctx, "digest", 15*time.Minute, s.enqueueDigests)
 	go s.loop(ctx, "rescore", time.Hour, s.enqueueRescore)
-	go s.loop(ctx, "translate", 10*time.Minute, s.enqueueTranslations)
 	go s.loop(ctx, "cluster", 15*time.Minute, s.clusterStories)
 	go s.loop(ctx, "media", time.Hour, s.backfillMedia)
 	go s.loop(ctx, "reclean", time.Hour, s.recleanBodies)
-	go s.loop(ctx, "audio", time.Hour, s.enqueueDailyAudio)
-	go s.loop(ctx, "premium-audio-delivery", 15*time.Minute, s.enqueuePremiumAudioBriefs)
 	go s.loop(ctx, "analysis-candidates", time.Hour, s.refreshAnalysisCandidates)
-	go s.loop(ctx, "daily-pick", time.Hour, s.pickDailyHotTopic)
 	go s.loop(ctx, "reaper", 5*time.Minute, s.reapStuck)
+	if s.llmEnabled {
+		go s.loop(ctx, "translate", 10*time.Minute, s.enqueueTranslations)
+		go s.loop(ctx, "editorial-pick", time.Hour, s.pickHotTopics)
+	}
+	if s.ttsEnabled {
+		go s.loop(ctx, "audio", time.Hour, s.enqueueDailyAudio)
+		go s.loop(ctx, "premium-audio-delivery", 15*time.Minute, s.enqueuePremiumAudioBriefs)
+	}
+	if s.sportsSync != nil && s.sportsSync.Enabled() {
+		go s.loop(ctx, "sports-data", 15*time.Minute, s.sportsSync.Sync)
+	}
 	go func() {
 		if err := s.recleanBodies(ctx); err != nil {
 			s.log.Error("initial body reclean failed", "err", err)
@@ -64,11 +92,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 	// Run the audio check explicitly at startup as well as inside its regular
 	// loop. This makes a late-starting local worker catch up with the 06:00/20:00
 	// edition instead of waiting for the first hourly tick.
-	go func() {
-		if err := s.enqueueDailyAudio(ctx); err != nil {
-			s.log.Error("initial audio schedule failed", "err", err)
-		}
-	}()
+	if s.ttsEnabled {
+		go func() {
+			if err := s.enqueueDailyAudio(ctx); err != nil {
+				s.log.Error("initial audio schedule failed", "err", err)
+			}
+		}()
+	}
 	s.log.Info("scheduler started")
 	<-ctx.Done()
 	s.log.Info("scheduler stopped")
@@ -140,9 +170,9 @@ func (s *Scheduler) enqueueDailyAudio(ctx context.Context) error {
 }
 
 // refreshAnalysisCandidates keeps the admin desk's ranking current. It scores
-// and stores candidates but no longer drafts anything: drafting is a single
-// deliberate decision taken once a day by pickDailyHotTopic, not a standing
-// order to write about whatever clears a bar this hour.
+// and stores candidates but never drafts: drafting is a bounded, deliberate
+// decision taken by pickHotTopics — a few stories a day, spaced apart — not a
+// standing order to write about whatever clears a bar this hour.
 //
 // It scores through the same scoreContenders as the pick. That is the point —
 // the desk must rank stories the way the newsroom actually chooses them, or the
@@ -190,28 +220,52 @@ func scoreContenders(contenders []domain.HotTopicCluster) []postgres.DailyPick {
 	return out
 }
 
-// pickDailyHotTopic is the newsroom's one editorial decision of the day.
+// editorialPickGap is the minimum time between two editorial commitments.
 //
-// It runs hourly but does nothing until dailyPickHour, then chooses the single
-// hottest story of the last 24 hours and commits the LLM budget to it. Waiting
-// until the evening is the point: a story that broke at noon has had a full day
-// to be corroborated, argued about and followed up, and only by then can the
-// ranking tell a genuine controversy from a headline that looked loud at 9am.
+// It is what "spread across the day" actually means here. The scheduler ticks
+// every minute, and picksPerDay alone would let it claim the whole day's quota
+// in the first three ticks after editorialStartHour — three articles at 09:01
+// and silence until tomorrow, which is the old once-a-day problem wearing a
+// bigger number. The gap also lets the ranking see a changed world between
+// picks: three hours of ingestion is long enough for a different story to
+// become the hottest one.
+const editorialPickGap = 3 * time.Hour
+
+// pickHotTopics commits the newsroom to the day's stories worth an analysis.
 //
-// Everything before the pick is free — clustering, counting sources, matching
-// controversy words. The LLM is spent only after a winner exists, on that
-// winner alone. Roughly seven calls a day buys one properly sourced piece,
-// where the old hourly drafting loop burned the same budget failing to gather
-// three translated sources for three different clusters at once.
-func (s *Scheduler) pickDailyHotTopic(ctx context.Context) error {
+// It does nothing before editorialStartHour, then claims at most picksPerDay
+// stories, at most one per editorialPickGap, always the hottest cluster still
+// unclaimed. Everything before a pick is free — clustering, counting sources,
+// matching controversy words — and the LLM is spent only once a winner exists.
+//
+// This used to pick exactly one story, at 21:00, and the reasoning was explicit:
+// it "commits its LLM budget to the single hottest story of the day". That was
+// written while a bug billed Gemini calls at Anthropic's prices against a $0.50
+// ceiling, so the budget really was down to its last few calls and one article
+// really was all it could buy. The meter was wrong — the calls cost nothing —
+// and the caution outlived the emergency that justified it. Meanwhile 18
+// clusters a day carry the three translated sources an analysis needs, 22 sit
+// proposed, and whole hours pass using six calls of a 240-call allowance.
+//
+// Waiting for the evening had a real argument behind it too: a story that broke
+// at noon has had a day to be corroborated, and only by then can the ranking
+// tell a genuine controversy from a headline that was merely loud at 9am. The
+// gap is what preserves that argument — heat is still measured over 24 hours,
+// and a story that fades between picks simply stops winning.
+func (s *Scheduler) pickHotTopics(ctx context.Context) error {
 	now := time.Now().In(vietnamTime())
-	if now.Hour() < s.dailyPickHour {
+	if now.Hour() < s.editorialStartHour {
 		return nil
 	}
-	if _, err := s.db.Analysis.PickedForDate(ctx, now); err == nil {
-		return nil // already decided today
-	} else if err != domain.ErrNotFound {
+	picked, lastPick, err := s.db.Analysis.PicksForDate(ctx, now)
+	if err != nil {
 		return err
+	}
+	if picked >= s.picksPerDay {
+		return nil // the day's editorial quota is spent
+	}
+	if !lastPick.IsZero() && now.Sub(lastPick) < editorialPickGap {
+		return nil // too soon after the last one
 	}
 
 	contenders, err := s.db.Analysis.HotTopicContenders(ctx, 24*time.Hour, 60)
@@ -240,8 +294,10 @@ func (s *Scheduler) pickDailyHotTopic(ctx context.Context) error {
 		_ = s.db.Analysis.MarkFailed(ctx, best.ClusterID, err)
 		return err
 	}
-	s.log.Info("daily hot topic picked",
+	s.log.Info("hot topic picked",
 		"date", now.Format("2006-01-02"),
+		"pick", picked+1,
+		"of", s.picksPerDay,
 		"cluster", best.ClusterID,
 		"title", best.Cluster.RepresentativeTitle,
 		"heat", best.Heat,
@@ -252,21 +308,38 @@ func (s *Scheduler) pickDailyHotTopic(ctx context.Context) error {
 	return nil
 }
 
-// minDailyPickHeat is the floor below which no story is worth the day's budget.
-// A quiet day should produce no piece rather than a forced one: two mid-quality
-// outlets reporting the same routine result clears neither the corroboration
-// nor the controversy bar, and writing about it anyway is how an opinion section
+// minPickHeat is the floor below which a story is not worth an analysis.
+//
+// The principle behind it stands and is the reason there is a floor at all: a
+// quiet day should produce no piece rather than a forced one. Two mid-quality
+// outlets reporting the same routine result clears neither the corroboration nor
+// the controversy bar, and writing about it anyway is how an opinion section
 // loses its reason to exist.
-const minDailyPickHeat = 45
+//
+// The number was 45, which enforced something stricter than that principle. On
+// an ordinary day the hottest unclaimed cluster reaches about 42, so 45 did not
+// mean "skip the quiet days" — it meant "skip every day but the extraordinary
+// one". The three pieces ever written scored 122, 67 and 59; everything else
+// bunched between 30 and 42 and was refused. Part of why it sat that high was
+// the same fiction that shaped the rest of the desk: the floor guarded "the
+// day's budget", and that budget was a pricing bug reading $0.91 against $0.50
+// on a real spend of nothing.
+//
+// 40 is where the principle actually lands for a sports paper. It still refuses
+// 21 of 27 current clusters. What it stops refusing is the story with three
+// high-quality sources that simply is not a scandal — a Tour de France hat-trick,
+// the World Cup final line-up — because sport mostly is not scandal, and a desk
+// that only writes when someone is angry is not covering the sport.
+const minPickHeat = 40
 
 // rankHotTopics returns the highest-scoring contender, or ok=false when nothing
-// clears minDailyPickHeat. It shares scoreContenders with the desk refresh so
+// clears minPickHeat. It shares scoreContenders with the desk refresh so
 // the two can never drift onto different scales.
 func rankHotTopics(contenders []domain.HotTopicCluster) (postgres.DailyPick, bool) {
 	var best postgres.DailyPick
 	found := false
 	for _, p := range scoreContenders(contenders) {
-		if p.Heat < minDailyPickHeat {
+		if p.Heat < minPickHeat {
 			continue
 		}
 		if found && p.Heat <= best.Heat {
@@ -444,13 +517,25 @@ func (s *Scheduler) enqueueDigests(ctx context.Context) error {
 			s.log.Error("enqueue daily failed", "user", uid, "err", err)
 		}
 	}
-	weekly, err := s.db.Telegram.UsersDueForWeekly(ctx)
+	// The weekly research digest used to be enqueued here. Migration 0024
+	// disabled every Europe PMC source, so from that day BuildWeekly could only
+	// ever return "nothing to send" — the scheduler woke, queried, and found the
+	// same empty week, forever. A digest with no possible content is not a
+	// feature that is quiet; it is one that is over.
+	//
+	// Follow alerts are the one digest with no hour of its own: they answer to
+	// the news, not to the clock. UsersDueForFollowAlert has already excluded
+	// anyone inside quiet hours or inside the cooldown, and the handler sends
+	// nothing when there is nothing worth sending, so the common outcome of this
+	// loop is a cheap no-op.
+	alerts, err := s.db.Telegram.UsersDueForFollowAlert(ctx)
 	if err != nil {
 		return err
 	}
-	for _, uid := range weekly {
-		if err := s.enqueue.EnqueueSendWeekly(ctx, uid); err != nil {
-			s.log.Error("enqueue weekly failed", "user", uid, "err", err)
+	now := time.Now()
+	for _, uid := range alerts {
+		if err := s.enqueue.EnqueueFollowAlert(ctx, uid, now); err != nil {
+			s.log.Error("enqueue follow alert failed", "user", uid, "err", err)
 		}
 	}
 	return nil

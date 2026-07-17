@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 
 	"repwire/internal/domain"
@@ -42,11 +43,15 @@ type Handler struct {
 	db      *postgres.DB
 	client  *Client
 	enqueue Enqueuer
+	// baseURL is PUBLIC_BASE_URL, used to point a lost user back at the web app.
+	baseURL string
 }
 
-// NewHandler constructs a webhook Handler.
-func NewHandler(db *postgres.DB, client *Client, enqueue Enqueuer) *Handler {
-	return &Handler{db: db, client: client, enqueue: enqueue}
+// NewHandler constructs a webhook Handler. baseURL is the public address of the
+// web app (PUBLIC_BASE_URL); it may be empty or a dev address, in which case
+// replies degrade to plain text rather than failing.
+func NewHandler(db *postgres.DB, client *Client, enqueue Enqueuer, baseURL string) *Handler {
+	return &Handler{db: db, client: client, enqueue: enqueue, baseURL: strings.TrimRight(baseURL, "/")}
 }
 
 // Handle dispatches an update. Errors are logged by the caller; user-facing
@@ -78,7 +83,13 @@ func (h *Handler) handleStart(ctx context.Context, u *Update, text string) error
 	chatID := u.Message.Chat.ID
 	parts := strings.Fields(text)
 	if len(parts) < 2 {
-		return h.reply(ctx, chatID, "Chào bạn! Mở BaoTheX → Cài đặt → Telegram và bấm \"Kết nối Telegram\" để nhận mã liên kết.")
+		// A bare /start is someone who found the bot before the web app. The bot
+		// cannot link them — it has no idea which account this chat belongs to
+		// until the site issues a code — so the only useful thing it can do is
+		// hand them the way back, as one tap rather than a set of directions.
+		return h.replyWithButtons(ctx, chatID,
+			"Chào bạn! Bot chưa biết đây là tài khoản nào. Hãy mở BaoTheX, đăng nhập rồi bấm \"Kết nối Telegram\" — Telegram sẽ tự mở lại với mã liên kết, bạn không phải gõ gì cả.",
+			h.connectButton())
 	}
 	code := parts[1]
 	var username *string
@@ -131,4 +142,47 @@ func (h *Handler) handleToday(ctx context.Context, chatID int64) error {
 func (h *Handler) reply(ctx context.Context, chatID int64, text string) error {
 	_, err := h.client.SendMessage(ctx, chatID, EscapeMarkdownV2(text), nil)
 	return err
+}
+
+// replyWithButtons sends text with an optional inline keyboard. Passing nil
+// buttons is the same as reply, which is what makes connectButton safe to call
+// unconditionally.
+func (h *Handler) replyWithButtons(ctx context.Context, chatID int64, text string, buttons [][]InlineButton) error {
+	_, err := h.client.SendMessage(ctx, chatID, EscapeMarkdownV2(text), buttons)
+	return err
+}
+
+// connectButton returns a one-tap link into the web app's settings page, or nil
+// when PUBLIC_BASE_URL cannot legally go in a Telegram button.
+//
+// Telegram validates inline URL buttons server-side and rejects a host it will
+// not resolve — a dev machine's http://localhost:3000 comes back as
+// BUTTON_URL_INVALID, and that error fails the whole sendMessage. A user who
+// typed /start would then get no reply at all, which is worse than the plain
+// directions this button is replacing. So on a dev address the button is
+// dropped and the text stands on its own: an imperfect answer that arrives
+// beats a better one that errors.
+func (h *Handler) connectButton() [][]InlineButton {
+	if !buttonURLAllowed(h.baseURL) {
+		return nil
+	}
+	return [][]InlineButton{{{Text: "Mở BaoTheX để kết nối", URL: h.baseURL + "/cai-dat"}}}
+}
+
+// buttonURLAllowed reports whether a URL is public enough for Telegram to
+// accept it in an inline button.
+func buttonURLAllowed(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" || strings.HasSuffix(host, ".local") {
+		return false
+	}
+	// A bare hostname with no dot is not resolvable from Telegram's servers.
+	return strings.Contains(host, ".")
 }

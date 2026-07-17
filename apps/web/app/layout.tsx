@@ -1,9 +1,9 @@
-/* eslint-disable react-refresh/only-export-components */
 import type { Metadata } from "next";
 import "./globals.css";
 import { SiteHeader } from "./ui";
 import { SiteBackButton } from "./action-buttons";
 import { PersistentAudioProvider } from "./persistent-audio-player";
+import { ProductAnalytics } from "./product-analytics";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://baothex.vn";
 const DESCRIPTION =
@@ -43,6 +43,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="vi">
       <body>
         <PersistentAudioProvider>
+          <ProductAnalytics />
           <SiteHeader />
           <SiteBackButton />
           {children}

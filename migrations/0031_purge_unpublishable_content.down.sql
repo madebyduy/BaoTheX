@@ -1,0 +1,12 @@
+-- Irreversible.
+--
+-- 0031 deletes rows; a down migration cannot bring them back. The articles it
+-- removed came from feeds that only serve the last 72 hours, so even a re-fetch
+-- would not restore them — and the podcast and research feeds are switched off
+-- entirely, so those two groups have no source left at all.
+--
+-- This file exists because golang-migrate wants a pair, and because a down
+-- migration that silently did nothing while claiming to roll back would be worse
+-- than one that says so. If the deletion was a mistake, the fix is a database
+-- restore, not a migration.
+SELECT 'migration 0031 deleted content permanently and cannot be reversed; restore from a backup' AS notice;

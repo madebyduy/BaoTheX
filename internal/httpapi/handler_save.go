@@ -63,6 +63,21 @@ func (s *Server) handleListSaved(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, nonNilItems(items), &Meta{Page: page, PerPage: perPage, Total: len(items)})
 }
 
+func (s *Server) handleSavedStatus(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	id, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid id")
+		return
+	}
+	saved, err := s.db.User.IsSaved(r.Context(), u.ID, id)
+	if err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"saved": saved}, nil)
+}
+
 func (s *Server) handleListCollections(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
 	cols, err := s.db.User.ListCollections(r.Context(), u.ID)

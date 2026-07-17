@@ -1,8 +1,10 @@
 import { Footer } from "../ui";
 import { CheckoutButton } from "./checkout-button";
 import { PremiumStatus } from "./premium-status";
+import { api } from "../lib";
 
-export default function PremiumPage() {
+export default async function PremiumPage() {
+  const capabilities = await api<{ sepay_enabled?: boolean }>("/capabilities", {}, 60);
   return (
     <>
       <main className="wrap premium-page">
@@ -17,7 +19,13 @@ export default function PremiumPage() {
             Nhận tin đã xác minh, bản audio 6–8 phút và cảnh báo từ những đội, giải đấu, cầu thủ bạn
             thật sự quan tâm.
           </p>
-          <CheckoutButton />
+          {capabilities.sepay_enabled ? (
+            <CheckoutButton />
+          ) : (
+            <p className="settings-message">
+              Premium đang ở chế độ giới thiệu; mọi tính năng cốt lõi vẫn miễn phí.
+            </p>
+          )}
           <PremiumStatus />
         </section>
         <section className="premium-grid">

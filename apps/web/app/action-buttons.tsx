@@ -43,6 +43,29 @@ export function SiteBackButton() {
 export function SaveButton({ contentId }: { contentId: number }) {
   const [saved, setSaved] = useState(false);
   const [message, setMessage] = useState("");
+  const [organizing, setOrganizing] = useState(false);
+  const [collections, setCollections] = useState<{ id: number; name: string }[]>([]);
+  const [collectionId, setCollectionId] = useState("");
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    let active = true;
+    fetch(`${API}/api/v1/saved/${contentId}/status`, { credentials: "include", cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
+      .then((json) => {
+        if (active) setSaved(Boolean((json.data ?? json).saved));
+      })
+      .catch(() => null);
+    return () => {
+      active = false;
+    };
+  }, [contentId]);
+  useEffect(() => {
+    if (!organizing) return;
+    fetch(`${API}/api/v1/collections`, { credentials: "include" })
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
+      .then((json) => setCollections(json.data ?? json ?? []))
+      .catch(() => null);
+  }, [organizing]);
   async function toggle() {
     const response = await fetch(`${API}/api/v1/saved/${contentId}`, {
       method: saved ? "DELETE" : "POST",
@@ -53,20 +76,75 @@ export function SaveButton({ contentId }: { contentId: number }) {
     if (response.ok) {
       setSaved(!saved);
       setMessage(saved ? "Đã bỏ lưu" : "Đã lưu vào thư viện");
+      setOrganizing(!saved);
     } else {
       setMessage("Bạn cần đăng nhập để lưu nội dung");
     }
   }
+  async function organize() {
+    const response = await fetch(`${API}/api/v1/saved/${contentId}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        collection_id: collectionId ? Number(collectionId) : null,
+        note: note.trim() || null,
+      }),
+    });
+    setMessage(response.ok ? "Đã lưu ghi chú và bộ sưu tập" : "Chưa thể cập nhật bài đã lưu");
+    if (response.ok) setOrganizing(false);
+  }
   return (
-    <button className="btn ember" onClick={toggle}>
-      {message || (saved ? "Bỏ lưu" : "Lưu bài viết")}
-    </button>
+    <div className="save-control">
+      <button className="btn ember" onClick={toggle}>
+        {message || (saved ? "Bỏ lưu" : "Lưu bài viết")}
+      </button>
+      {saved && !organizing ? (
+        <button className="save-organize-link" type="button" onClick={() => setOrganizing(true)}>
+          Sắp xếp / ghi chú
+        </button>
+      ) : null}
+      {organizing ? (
+        <div className="save-organizer">
+          <select value={collectionId} onChange={(event) => setCollectionId(event.target.value)}>
+            <option value="">Không xếp bộ sưu tập</option>
+            {collections.map((collection) => (
+              <option value={collection.id} key={collection.id}>
+                {collection.name}
+              </option>
+            ))}
+          </select>
+          <input
+            value={note}
+            maxLength={500}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Ghi chú riêng cho bài này"
+          />
+          <button type="button" onClick={organize}>
+            Lưu chi tiết
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
 export function FollowButton({ topicId, entityId }: { topicId?: number; entityId?: number }) {
   const [following, setFollowing] = useState(false);
   const [message, setMessage] = useState("");
+  useEffect(() => {
+    const query = entityId ? `entity_id=${entityId}` : `topic_id=${topicId}`;
+    let active = true;
+    fetch(`${API}/api/v1/follows/status?${query}`, { credentials: "include", cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
+      .then((json) => {
+        if (active) setFollowing(Boolean((json.data ?? json).following));
+      })
+      .catch(() => null);
+    return () => {
+      active = false;
+    };
+  }, [topicId, entityId]);
   async function toggle() {
     const target = entityId ? `entities/${entityId}` : `topics/${topicId}`;
     const response = await fetch(`${API}/api/v1/follows/${target}`, {

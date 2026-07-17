@@ -62,8 +62,11 @@ func TestLoadDefaultsAreReachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaults rejected: %v", err)
 	}
-	if c.DailyPickHour != 21 {
-		t.Fatalf("DailyPickHour = %d, want 21", c.DailyPickHour)
+	if c.EditorialStartHour != 9 {
+		t.Fatalf("EditorialStartHour = %d, want 9", c.EditorialStartHour)
+	}
+	if c.EditorialPicksPerDay != 3 {
+		t.Fatalf("EditorialPicksPerDay = %d, want 3", c.EditorialPicksPerDay)
 	}
 }
 
@@ -138,12 +141,23 @@ func TestLoadLeavesNonGeminiUrlsAlone(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsBadDailyPickHour(t *testing.T) {
+func TestLoadRejectsBadEditorialStartHour(t *testing.T) {
 	setRequired(t)
-	t.Setenv("DAILY_PICK_HOUR", "25")
+	t.Setenv("EDITORIAL_START_HOUR", "25")
 
 	if _, err := Load(); err == nil {
 		t.Fatal("expected hour 25 to be rejected")
+	}
+}
+
+// Zero would read as "no editorial limit" and mean the opposite: a desk that
+// never commits to anything. It is a typo, not a setting.
+func TestLoadRejectsZeroEditorialPicks(t *testing.T) {
+	setRequired(t)
+	t.Setenv("EDITORIAL_PICKS_PER_DAY", "0")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected zero picks per day to be rejected")
 	}
 }
 

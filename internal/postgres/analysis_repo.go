@@ -98,6 +98,20 @@ func (r *AnalysisRepo) HotTopicContenders(ctx context.Context, window time.Durat
 		WHERE c.type='article'
 		  AND c.status NOT IN ('failed','hidden')
 		  AND c.published_at >= now()-$1::interval
+		  -- Exclude stories the desk has already committed to. picked_for_date is
+		  -- set only by ClaimDailyPick, never by UpsertCandidates, so this drops
+		  -- the drafted/reviewed/published and keeps the merely proposed — which
+		  -- is the pool worth ranking.
+		  --
+		  -- This mattered little while exactly one story was picked per day: the
+		  -- pick happened once and the question never came up again. It is
+		  -- load-bearing now that several are picked. Without it the ranker would
+		  -- return the same hottest cluster on every pass, and ClaimDailyPick's
+		  -- ON CONFLICT (cluster_id) DO UPDATE would re-draft that one story N
+		  -- times over instead of covering N stories.
+		  AND NOT EXISTS (
+		      SELECT 1 FROM analysis_candidates ac
+		      WHERE ac.cluster_id = sc.id AND ac.picked_for_date IS NOT NULL)
 		GROUP BY sc.id
 		HAVING count(DISTINCT c.source_id) >= 2
 		ORDER BY count(DISTINCT c.source_id) FILTER (WHERE s.quality >= 4) DESC,
@@ -121,6 +135,27 @@ func (r *AnalysisRepo) HotTopicContenders(ctx context.Context, window time.Durat
 }
 
 // PickedForDate returns the cluster already chosen for the given day, if any.
+// PicksForDate returns how many stories the desk has already committed to on
+// this date, and when the most recent one was claimed. A zero time means none.
+//
+// It replaces a "has today been decided?" check that could only ever answer once
+// per day, because the desk now commits to several stories and needs to know how
+// many and how long ago rather than merely whether.
+func (r *AnalysisRepo) PicksForDate(ctx context.Context, day time.Time) (count int, last time.Time, err error) {
+	var lastAt *time.Time
+	err = r.db.Pool.QueryRow(ctx, `
+		SELECT count(*)::int, max(selected_at)
+		FROM analysis_candidates
+		WHERE picked_for_date = $1::date`, day.Format("2006-01-02")).Scan(&count, &lastAt)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	if lastAt != nil {
+		last = *lastAt
+	}
+	return count, last, nil
+}
+
 func (r *AnalysisRepo) PickedForDate(ctx context.Context, day time.Time) (*domain.AnalysisCandidate, error) {
 	rows, err := r.db.Pool.Query(ctx, candidateSelect+`
 		WHERE ac.picked_for_date=$1::date LIMIT 1`, day.Format("2006-01-02"))

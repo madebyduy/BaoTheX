@@ -32,6 +32,11 @@ type Source struct {
 	LastError           *string       `json:"last_error,omitempty"`
 	ConsecutiveFailures int           `json:"consecutive_failures"`
 	CreatedAt           time.Time     `json:"created_at"`
+	// DefaultTopicID files this source's articles when keyword classification
+	// finds nothing. Set only for single-beat sources — a story from Cyclingnews
+	// is cycling whatever its headline says. Nil for general sports desks, where
+	// a guess would be worse than no section at all.
+	DefaultTopicID *int64 `json:"default_topic_id,omitempty"`
 }
 
 // FeedURLOrEmpty is a small helper so callers avoid nil-deref on FeedURL.

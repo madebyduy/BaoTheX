@@ -25,6 +25,7 @@ type DB struct {
 	Job        *JobRepo
 	Search     *SearchRepo
 	Analysis   *AnalysisRepo
+	Sports     *SportsRepo
 }
 
 // Open creates a connection pool and pings the database.
@@ -65,6 +66,7 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 	db.Job = &JobRepo{db: db}
 	db.Search = &SearchRepo{db: db}
 	db.Analysis = &AnalysisRepo{db: db}
+	db.Sports = &SportsRepo{db: db}
 	return db, nil
 }
 

@@ -14,6 +14,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "/chu-de", priority: 0.7, freq: "daily" as const },
     { path: "/nguon", priority: 0.5, freq: "weekly" as const },
     { path: "/video", priority: 0.6, freq: "daily" as const },
+    { path: "/lich-the-thao", priority: 0.9, freq: "hourly" as const },
+    { path: "/bat-kip", priority: 0.8, freq: "hourly" as const },
+    { path: "/ban-the-thao", priority: 0.8, freq: "daily" as const },
+    { path: "/du-doan", priority: 0.6, freq: "daily" as const },
     { path: "/premium", priority: 0.5, freq: "monthly" as const },
   ].map((r) => ({
     url: `${SITE}${r.path}`,

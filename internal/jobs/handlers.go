@@ -57,7 +57,7 @@ func (h *Handlers) Register() map[string]HandlerFunc {
 		domain.JobTranslate:        h.handleTranslate,
 		domain.JobScore:            h.handleScore,
 		domain.JobSendDaily:        h.handleSendDaily,
-		domain.JobSendWeekly:       h.handleSendWeekly,
+		domain.JobFollowAlert:      h.handleFollowAlert,
 		domain.JobGenerateAudio:    h.handleGenerateAudio,
 		domain.JobGenerateAnalysis: h.handleGenerateAnalysis,
 		domain.JobSendPremiumBrief: h.handleSendPremiumBrief,
@@ -201,6 +201,15 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 		return err
 	}
 	assignments := process.Classify(item, extraText, topics)
+	if len(assignments) == 0 {
+		// Nothing in the text named a section. Fall back to the source's beat:
+		// a Cyclingnews story is cycling even when its headline only says "Tour
+		// de France", and sports headlines overwhelmingly name people and events
+		// rather than sports. Only single-beat sources carry a default, so this
+		// cannot file a basketball story under football — a general desk leaves
+		// default_topic_id NULL and the article stays unsectioned, as before.
+		assignments = h.sourceDefaultTopic(ctx, item)
+	}
 	if len(assignments) > 0 {
 		if err := h.DB.Topic.AssignTopics(ctx, item.ID, process.ToContentTopics(item.ID, assignments)); err != nil {
 			return err
@@ -239,7 +248,7 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 		if bodyErr != nil || len(strings.Fields(body.OriginalBody)) < 120 {
 			return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)
 		}
-		if item.Language != "vi" {
+		if item.Language != "vi" && !translationReady(body) {
 			if h.Summarizer == nil || !h.Summarizer.Enabled() {
 				return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)
 			}
@@ -276,6 +285,40 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 		}
 	}
 	return h.DB.Content.SetStatus(ctx, item.ID, status)
+}
+
+// translationReady reports whether a Vietnamese edition of this body is already
+// stored, i.e. whether the expensive work has been done before.
+//
+// handleProcess resets an item to 'processing' on entry and re-derives its
+// status from scratch, which is right for a freshly-ingested item and wrong for
+// every other caller. Without this check, re-running it over a foreign article
+// that is already live and already translated does one of two silent damages:
+// under LLM_TRANSLATE_MIN_SCORE it parks the article back to 'processing' and
+// takes a published story off the site, and over the threshold it queues a
+// second translation of a body we already hold, spending free-tier quota to
+// reproduce what is sitting in the row. Re-processing is a normal operation —
+// a new classifier vocabulary is reason enough — so it has to be safe to repeat.
+func translationReady(b *domain.ContentBody) bool {
+	return b != nil && b.TranslationStatus == "ready" &&
+		b.VietnameseBody != nil && strings.TrimSpace(*b.VietnameseBody) != ""
+}
+
+// sourceDefaultTopic returns the section configured for the item's source, or
+// nothing when the source has no single beat.
+//
+// The confidence is deliberately below what a headline keyword match earns
+// (0.5): the masthead is a reliable signal about the subject but a weaker claim
+// than the article naming the sport itself, and a later rescore or a human
+// should be able to outrank it. A lookup failure is not an error worth failing
+// the job over — the article simply stays unsectioned, which is where it already
+// was.
+func (h *Handlers) sourceDefaultTopic(ctx context.Context, item *domain.ContentItem) []process.Assignment {
+	src, err := h.DB.Source.Get(ctx, item.SourceID)
+	if err != nil || src.DefaultTopicID == nil {
+		return nil
+	}
+	return []process.Assignment{{TopicID: *src.DefaultTopicID, Confidence: 0.4, IsPrimary: true}}
 }
 
 // shouldSummarize gates the LLM by config threshold + availability.
@@ -453,7 +496,15 @@ func (h *Handlers) handleSendDaily(ctx context.Context, j *domain.Job) error {
 	return nil
 }
 
-func (h *Handlers) handleSendWeekly(ctx context.Context, j *domain.Job) error {
+// handleFollowAlert nudges a user about new stories in the topics they follow.
+//
+// The switch for this — "Thông báo khi chủ đề theo dõi có bài mới" — has been in
+// the settings panel, and the follow_alert value has been in the digest_kind
+// enum, since the first migration. Everything existed except the part that
+// sends: no enqueuer, no handler, no scheduler tick. A user could turn it on and
+// nothing would ever arrive, which is worse than not offering it, because the
+// setting is a promise and the reader has no way to see it is not kept.
+func (h *Handlers) handleFollowAlert(ctx context.Context, j *domain.Job) error {
 	var p domain.DigestPayload
 	if err := j.Unmarshal(&p); err != nil {
 		return err
@@ -465,14 +516,24 @@ func (h *Handlers) handleSendWeekly(ctx context.Context, j *domain.Job) error {
 	if err != nil {
 		return err
 	}
-	msg, ids, ok, err := h.Digest.BuildWeekly(ctx, p.UserID)
+	prefs, err := h.DB.Telegram.GetPrefs(ctx, p.UserID)
+	if err != nil {
+		return err
+	}
+	// Re-checked here rather than trusted from the scheduler: the job may have
+	// waited in the queue, and a user who switched the alert off in between is
+	// entitled to have meant it.
+	if !prefs.FollowAlerts {
+		return nil
+	}
+	msg, ids, ok, err := h.Digest.BuildFollowAlert(ctx, p.UserID, prefs)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return nil
 	}
-	return h.deliver(ctx, p.UserID, conn.ChatID, domain.DigestWeeklyResearch, msg, ids)
+	return h.deliver(ctx, p.UserID, conn.ChatID, domain.DigestFollowAlert, msg, ids)
 }
 
 // deliver sends a message and records the delivery (handling a blocked bot).

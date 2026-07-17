@@ -16,19 +16,22 @@ const (
 	JobDead    JobStatus = "dead"
 )
 
-// Job kinds. Keep in sync with the worker handler registry.
+// Job kinds. Keep in sync with the worker handler registry — a kind with no
+// handler is not inert, it is a job that dies on "no handler for kind". The
+// registry is the list that matters; this one only names things for callers.
+//
+// "classify" used to be here with nothing enqueueing it and nothing handling it.
+// Classification is a step inside process_content, not a job of its own.
 const (
 	JobFetchRSS         = "fetch_rss"
 	JobFetchYouTube     = "fetch_youtube"
 	JobFetchPMC         = "fetch_pmc"
 	JobFetchPodcast     = "fetch_podcast"
 	JobProcessContent   = "process_content"
-	JobClassify         = "classify"
 	JobSummarize        = "summarize"
 	JobTranslate        = "translate"
 	JobScore            = "score"
 	JobSendDaily        = "send_daily"
-	JobSendWeekly       = "send_weekly"
 	JobFollowAlert      = "follow_alert"
 	JobGenerateAudio    = "generate_audio_brief"
 	JobGenerateAnalysis = "generate_cluster_analysis"

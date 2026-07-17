@@ -35,12 +35,26 @@ type Summarizer struct {
 	// bounds the rate, and they are not the same thing.
 	pacer *ratelimit.Pacer
 
+	pricing         Pricing
 	dailyBudgetUSD  float64
 	maxCallsPerHour int
 
 	mu       sync.Mutex
 	apiKeys  []string
 	keyIndex int
+}
+
+// Pricing is what one million tokens costs the account behind LLM_API_KEY. It
+// exists so the daily budget meter can describe the provider actually in use.
+//
+// These rates must match the provider named by LLM_BASE_URL, and nothing checks
+// that for you. Both zero is the correct setting for a free tier, where calls
+// genuinely cost nothing: the budget then never intervenes and the provider's
+// own quota is the real limit — which is the honest arrangement, because a
+// meter that invents spending would stop work that is not costing anything.
+type Pricing struct {
+	InputUSDPerMTok  float64
+	OutputUSDPerMTok float64
 }
 
 // NewSummarizer constructs a Summarizer. apiKeys is the rotation pool; empty and
@@ -51,7 +65,7 @@ type Summarizer struct {
 // renderer: both call the same Gemini project and therefore share one
 // per-minute allowance, so pacing them separately would let the two of them
 // stampede each other while each believed it was behaving.
-func NewSummarizer(apiKeys []string, baseURL, model string, dailyBudgetUSD float64, maxCallsPerHour int, llm *postgres.LLMRepo, pacer *ratelimit.Pacer) *Summarizer {
+func NewSummarizer(apiKeys []string, baseURL, model string, pricing Pricing, dailyBudgetUSD float64, maxCallsPerHour int, llm *postgres.LLMRepo, pacer *ratelimit.Pacer) *Summarizer {
 	keys := make([]string, 0, len(apiKeys))
 	for _, k := range apiKeys {
 		if t := strings.TrimSpace(k); t != "" {
@@ -65,6 +79,7 @@ func NewSummarizer(apiKeys []string, baseURL, model string, dailyBudgetUSD float
 		model:           model,
 		llm:             llm,
 		pacer:           pacer,
+		pricing:         pricing,
 		dailyBudgetUSD:  dailyBudgetUSD,
 		maxCallsPerHour: maxCallsPerHour,
 	}
@@ -356,13 +371,90 @@ NGUYÊN LIỆU ĐÃ DẪN NGUỒN:
 	if err := json.Unmarshal([]byte(extractJSON(raw)), &out); err != nil {
 		return nil, fmt.Errorf("parse analysis draft: %w", err)
 	}
-	if strings.TrimSpace(out.Title) == "" || len(strings.Fields(out.Body)) < 800 {
-		return nil, fmt.Errorf("analysis draft is incomplete")
+	if err := validateAnalysisDraft(out, materials); err != nil {
+		return nil, err
 	}
 	if out.KeyPoints == nil {
 		out.KeyPoints = []string{}
 	}
 	return &out, nil
+}
+
+// analysisMinWords is the floor below which a draft is a stub rather than an
+// article. The prompt asks for 1,200-1,800 words; this leaves room for a model
+// that runs short without letting through something no editor could work with.
+const analysisMinWords = 800
+
+// footnoteCitation matches the bracketed source note — "[Nguồn: ESPN]",
+// "(Nguồn: VnExpress)" — that the draft prompt used to ask for by example.
+var footnoteCitation = regexp.MustCompile(`(?i)[\[(]\s*nguồn\s*:`)
+
+// analysisDeskSuffixes are the desk labels a masthead carries in the sources
+// table but never in prose: a writer says "theo VnExpress", not "theo VnExpress
+// Thể thao". Checked longest-first so "Thể thao Việt Nam" is stripped before
+// "Thể thao" can take a bite out of it.
+var analysisDeskSuffixes = []string{
+	"thể thao việt nam", "bóng đá quốc tế", "thể thao", "bóng đá",
+	"sports", "sport", "football", "news", "daily",
+}
+
+// validateAnalysisDraft holds a drafted article to the two things that make it
+// publishable-in-principle before a human ever opens it: it has to be a finished
+// piece, and every fact in it has to be traceable to a publication by name.
+//
+// The attribution rule has two sides and both come from the same lesson. Bracket
+// footnotes are a research artefact rather than journalism, and readers skip
+// them — so they are banned. But banning them alone is what taught the model to
+// stop naming anyone at all and reach for "theo ghi nhận nội bộ" instead, which
+// is strictly worse: an unsourced claim wearing the costume of a sourced one. So
+// a draft must also name, in prose, at least one of the publications it was
+// built from. Ban one shape of attribution and you must require the other, or
+// you have simply traded a visible citation for an invisible fabrication.
+func validateAnalysisDraft(d domain.AnalysisDraft, materials []domain.AnalysisMaterial) error {
+	if strings.TrimSpace(d.Title) == "" {
+		return fmt.Errorf("analysis draft has no title")
+	}
+	if n := len(strings.Fields(d.Body)); n < analysisMinWords {
+		return fmt.Errorf("analysis draft is too short: %d words, want at least %d", n, analysisMinWords)
+	}
+	if m := footnoteCitation.FindString(d.Body); m != "" {
+		return fmt.Errorf("analysis draft attributes with a footnote (%q): name the publication in the sentence instead", strings.TrimSpace(m))
+	}
+	if !namesAnySource(d.Body, materials) {
+		return fmt.Errorf("analysis draft names none of its %d sources: every fact must be traceable to a masthead", len(materials))
+	}
+	return nil
+}
+
+// namesAnySource reports whether the body credits at least one of the
+// publications it was drafted from, accepting the masthead alone.
+func namesAnySource(body string, materials []domain.AnalysisMaterial) bool {
+	b := strings.ToLower(body)
+	for _, m := range materials {
+		name := strings.ToLower(strings.TrimSpace(m.SourceName))
+		if name == "" {
+			continue
+		}
+		if strings.Contains(b, name) {
+			return true
+		}
+		if masthead := stripDeskSuffix(name); masthead != name && strings.Contains(b, masthead) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripDeskSuffix reduces a stored source name to the masthead a writer would
+// actually type. It returns name unchanged when nothing matches, so a source
+// with no suffix is never shortened into something that could match by accident.
+func stripDeskSuffix(name string) string {
+	for _, suffix := range analysisDeskSuffixes {
+		if trimmed := strings.TrimSuffix(name, " "+suffix); trimmed != name {
+			return strings.TrimSpace(trimmed)
+		}
+	}
+	return name
 }
 
 func formatAnalysisMaterials(materials []domain.AnalysisMaterial) string {
@@ -399,7 +491,9 @@ Có một phần so sánh các nguồn: nguồn nào đồng thuận, nguồn n�
 Kết bằng điều còn bỏ ngỏ hoặc diễn biến tiếp theo. Chỉ đặt tối đa một câu hỏi sắc nếu hồ sơ thật sự có tranh cãi; tin kết quả hoặc lịch thi đấu bình thường thì không đặt câu hỏi.
 
 QUY TẮC NGUỒN:
-- Mọi dữ kiện, con số, tỷ số, thời gian và phát biểu phải gắn tên nguồn, ví dụ [Nguồn: ESPN].
+- Mọi dữ kiện, con số, tỷ số, thời gian và phát biểu phải gắn tên nguồn, viết thẳng trong câu như một cây bút thật: "Theo ESPN, ...", "VnExpress cho hay ...", "Tuổi Trẻ Thể thao dẫn lời ...".
+- TUYỆT ĐỐI không dùng chú thích trong ngoặc kiểu [Nguồn: ESPN] hay (Nguồn: VnExpress). Đó là cách ghi của bài nghiên cứu, không phải của báo, và độc giả không đọc chúng.
+- Phải gọi thẳng tên tờ báo. Không được viết chung chung như "theo ghi nhận nội bộ", "theo một nguồn tin" hay "theo truyền thông" khi hồ sơ đã cho biết đích danh tờ nào đưa tin.
 - Tách dữ kiện với nhận xét. Nếu chưa chắc, phải nói rõ là chưa được xác nhận.
 - Không suy đoán thành sự thật, không phóng đại, không sao chép nguyên văn dài.
 
@@ -759,8 +853,8 @@ func (s *Summarizer) completeAnthropic(ctx context.Context, key, prompt string, 
 		return "", classify(resp.StatusCode, msg), fmt.Errorf("summarizer: %s", msg)
 	}
 
-	// Record usage (best-effort). Rough Haiku-class pricing estimate.
-	cost := estimateCost(out.Usage.InputTokens, out.Usage.OutputTokens)
+	// Record usage (best-effort), priced at the configured provider's rates.
+	cost := s.estimateCost(out.Usage.InputTokens, out.Usage.OutputTokens)
 	_ = s.llm.RecordUsage(ctx, s.model, out.Usage.InputTokens, out.Usage.OutputTokens, cost)
 
 	var sb strings.Builder
@@ -834,7 +928,8 @@ func (s *Summarizer) completeGemini(ctx context.Context, key, prompt string, max
 		return "", classify(resp.StatusCode, msg), fmt.Errorf("gemini: %s", msg)
 	}
 	_ = s.llm.RecordUsage(ctx, s.model, out.UsageMetadata.PromptTokenCount,
-		out.UsageMetadata.CandidatesTokenCount, 0)
+		out.UsageMetadata.CandidatesTokenCount,
+		s.estimateCost(out.UsageMetadata.PromptTokenCount, out.UsageMetadata.CandidatesTokenCount))
 	var sb strings.Builder
 	for _, candidate := range out.Candidates {
 		for _, part := range candidate.Content.Parts {
@@ -848,9 +943,19 @@ func (s *Summarizer) completeGemini(ctx context.Context, key, prompt string, max
 	return sb.String(), policyFatal, nil // policy ignored on success (err == nil)
 }
 
-// estimateCost is a coarse USD estimate ($1/Mtok in, $5/Mtok out).
-func estimateCost(inTok, outTok int) float64 {
-	return float64(inTok)/1_000_000*1.0 + float64(outTok)/1_000_000*5.0
+// estimateCost converts a call's token counts into the USD figure the daily
+// budget meter accumulates.
+//
+// This used to be a package-level function hardcoded at $1/$5 per million
+// tokens — Anthropic Haiku-class rates — with no way to say otherwise. That was
+// tolerable only because the one path that called it was the Anthropic path;
+// the Gemini path recorded a flat zero and LLM_DAILY_BUDGET_USD quietly meant
+// nothing at all on the provider this deployment actually uses. Both halves of
+// that were wrong in the same way: the meter described a provider rather than
+// the provider, and neither could be corrected without editing code.
+func (s *Summarizer) estimateCost(inTok, outTok int) float64 {
+	return float64(inTok)/1_000_000*s.pricing.InputUSDPerMTok +
+		float64(outTok)/1_000_000*s.pricing.OutputUSDPerMTok
 }
 
 // repairTruncatedJSON closes a JSON object that a model left open when it hit
@@ -953,13 +1058,48 @@ func repairTruncatedJSON(s string) string {
 
 // extractJSON returns the substring from the first '{' to the last '}' so we
 // tolerate models that wrap JSON in prose or code fences.
+// extractJSON returns the first complete JSON object in s, tolerating whatever
+// a model wraps around it: a markdown fence, a lead-in sentence, a friendly
+// sign-off, or a second object it decided to volunteer.
+//
+// It used to cut from the first '{' to the LAST '}', which is right only when
+// nothing at all follows the payload. A stray closing brace, a "Hy vọng giúp
+// ích!" sign-off, or a second object were each swept inside the slice, and
+// translate jobs died five attempts deep on "invalid character '}' after
+// top-level value". Counting depth is what fixes it, and the count has to
+// respect string values: the '}' in "Tỷ số {2-1}" closes nothing, and an
+// escaped quote inside a string does not end the string.
+//
+// When the object never closes — a response truncated at the token ceiling —
+// everything from the opening brace is returned, because repairTruncatedJSON
+// downstream can still salvage that, and returning the raw string would deny it
+// the chance.
 func extractJSON(s string) string {
 	start := strings.IndexByte(s, '{')
-	end := strings.LastIndexByte(s, '}')
-	if start >= 0 && end > start {
-		return s[start : end+1]
+	if start < 0 {
+		return s
 	}
-	return s
+	var depth int
+	var inString, escaped bool
+	for i := start; i < len(s); i++ {
+		switch c := s[i]; {
+		case escaped:
+			escaped = false
+		case inString && c == '\\':
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case inString:
+			// Structural characters inside a string value are data.
+		case c == '{':
+			depth++
+		case c == '}':
+			if depth--; depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return s[start:]
 }
 
 func clip(s string, n int) string {

@@ -51,6 +51,16 @@ func (e *Enqueuer) EnqueueTranslate(ctx context.Context, contentID int64) error 
 	})
 }
 
+// EnqueueFollowAlert schedules a follow-alert check for a user, deduped per
+// user and hour. The scheduler runs every minute and the alert's own cooldown
+// only applies once something has been sent, so without a dedup key a user with
+// nothing worth alerting on would be re-checked sixty times an hour forever.
+func (e *Enqueuer) EnqueueFollowAlert(ctx context.Context, userID int64, now time.Time) error {
+	return e.repo.Enqueue(ctx, domain.JobFollowAlert, domain.DigestPayload{UserID: userID}, postgres.EnqueueOpts{
+		DedupKey: fmt.Sprintf("follow_alert:%d:%s", userID, now.UTC().Format("2006-01-02T15")),
+	})
+}
+
 // EnqueueScore schedules (re)scoring of a content item.
 func (e *Enqueuer) EnqueueScore(ctx context.Context, contentID int64) error {
 	return e.repo.Enqueue(ctx, domain.JobScore, domain.ContentPayload{ContentID: contentID}, postgres.EnqueueOpts{
@@ -67,15 +77,6 @@ func (e *Enqueuer) EnqueueSendDaily(ctx context.Context, userID int64, immediate
 		opts.DedupKey = fmt.Sprintf("daily:%d:%s", userID, day)
 	}
 	return e.repo.Enqueue(ctx, domain.JobSendDaily, domain.DigestPayload{UserID: userID, Date: day}, opts)
-}
-
-// EnqueueSendWeekly schedules a weekly research digest for a user.
-func (e *Enqueuer) EnqueueSendWeekly(ctx context.Context, userID int64) error {
-	week := time.Now().UTC().Format("2006-W02")
-	return e.repo.Enqueue(ctx, domain.JobSendWeekly, domain.DigestPayload{UserID: userID}, postgres.EnqueueOpts{
-		DedupKey: fmt.Sprintf("weekly:%d:%s", userID, week),
-		Priority: 2,
-	})
 }
 
 func (e *Enqueuer) EnqueueGenerateAudio(ctx context.Context, day time.Time, edition string) error {

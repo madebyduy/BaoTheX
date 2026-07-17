@@ -11,6 +11,20 @@ import (
 // FollowRepo persists topic/entity/source follows and topic mutes.
 type FollowRepo struct{ db *DB }
 
+// FollowStatus returns the persisted state used to hydrate follow buttons.
+// A zero id means that target was not requested.
+func (r *FollowRepo) FollowStatus(ctx context.Context, userID, topicID, entityID int64) (bool, error) {
+	var following bool
+	switch {
+	case topicID > 0:
+		return following, r.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM user_topic_follows WHERE user_id=$1 AND topic_id=$2)`, userID, topicID).Scan(&following)
+	case entityID > 0:
+		return following, r.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM user_entity_follows WHERE user_id=$1 AND entity_id=$2)`, userID, entityID).Scan(&following)
+	default:
+		return false, domain.ErrValidation
+	}
+}
+
 // HasFeedTopics reports whether strict feed mode has at least one usable topic.
 func (r *FollowRepo) HasFeedTopics(ctx context.Context, userID int64) (bool, error) {
 	var ok bool
@@ -135,6 +149,16 @@ func (r *FollowRepo) MuteTopic(ctx context.Context, userID, topicID int64) error
 
 func (r *FollowRepo) UnmuteTopic(ctx context.Context, userID, topicID int64) error {
 	_, err := r.db.Pool.Exec(ctx, `DELETE FROM user_topic_mutes WHERE user_id=$1 AND topic_id=$2`, userID, topicID)
+	return err
+}
+
+func (r *FollowRepo) MuteSource(ctx context.Context, userID, sourceID int64) error {
+	_, err := r.db.Pool.Exec(ctx, `INSERT INTO user_source_mutes(user_id,source_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, userID, sourceID)
+	return err
+}
+
+func (r *FollowRepo) UnmuteSource(ctx context.Context, userID, sourceID int64) error {
+	_, err := r.db.Pool.Exec(ctx, `DELETE FROM user_source_mutes WHERE user_id=$1 AND source_id=$2`, userID, sourceID)
 	return err
 }
 

@@ -1,0 +1,18 @@
+# Keep LF in the working tree on every OS. Without this, Windows checkouts get
+# CRLF (core.autocrlf=true), which Prettier rejects — so `next build` failed
+# with "Delete ␍" on every file right after a clean pull.
+* text=auto eol=lf
+
+# Binaries must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.mp3 binary
+*.mp4 binary
+*.wav binary

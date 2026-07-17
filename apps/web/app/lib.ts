@@ -1,5 +1,6 @@
 export type Item = {
   id: number;
+  source_id?: number;
   title: string;
   type: string;
   summary?: string;
@@ -62,6 +63,58 @@ export type Entity = {
   avatar_url?: string;
   expertise?: string[];
   follower_count?: number;
+};
+export type Sport = {
+  id: number;
+  slug: string;
+  name: string;
+  enabled: boolean;
+};
+export type SportsEvent = {
+  id: number;
+  sport_id: number;
+  sport_slug: string;
+  sport_name: string;
+  competition_id?: number;
+  competition?: string;
+  title: string;
+  home_name?: string;
+  away_name?: string;
+  starts_at: string;
+  status: "scheduled" | "live" | "finished" | "postponed" | "cancelled";
+  home_score?: string;
+  away_score?: string;
+  data_source: string;
+  data_updated_at: string;
+  freshness: "live" | "delayed" | "scheduled" | "manual" | string;
+  is_manual: boolean;
+  manual_locked: boolean;
+  following?: boolean;
+  related_content?: Item[];
+};
+export type Prediction = {
+  id: number;
+  event_id?: number;
+  kind: "winner" | "score" | "player" | "quiz" | "poll";
+  question: string;
+  options: string[];
+  correct_option?: string;
+  deadline: string;
+  status: string;
+  points: number;
+  user_answer?: string;
+  is_correct?: boolean;
+  answer_count: number;
+};
+export type FanPassport = {
+  active_days: number;
+  current_streak: number;
+  articles_read: number;
+  events_followed: number;
+  predictions: number;
+  predictions_correct: number;
+  points: number;
+  badges: string[];
 };
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 // Public content is cached and revalidated in the background (ISR). Without a

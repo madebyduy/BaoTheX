@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Item, Source } from "../lib";
+import { AnalysisDesk } from "./goc-nhin/analysis-desk";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 
@@ -27,7 +28,7 @@ type LLMUsage = {
   output_tokens_today: number;
   model: string;
 };
-type View = "overview" | "content" | "sources" | "jobs";
+type View = "analysis" | "overview" | "content" | "sources" | "jobs";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}/api/v1${path}`, {
@@ -43,7 +44,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (json.data ?? json) as T;
 }
 
-export function AdminConsole({ initialView = "overview" }: { initialView?: View }) {
+export function AdminConsole({ initialView = "analysis" }: { initialView?: View }) {
   const [view, setView] = useState<View>(initialView);
   const [me, setMe] = useState<User | null | undefined>(undefined);
   const [content, setContent] = useState<Item[]>([]);
@@ -109,9 +110,16 @@ export function AdminConsole({ initialView = "overview" }: { initialView?: View 
       review: review.length,
       pending: total("pending"),
       running: total("running"),
-      dead: total("dead") + total("failed"),
     };
   }, [review, stats]);
+
+  const recentFailedJobs = useMemo(() => {
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    return jobs.filter(
+      (job) =>
+        ["dead", "failed"].includes(job.status) && new Date(job.created_at).getTime() >= since,
+    );
+  }, [jobs]);
 
   if (me === undefined) return <div className="admin-state">Đang kiểm tra phiên quản trị…</div>;
   if (!me) {
@@ -149,28 +157,37 @@ export function AdminConsole({ initialView = "overview" }: { initialView?: View 
       <nav className="admin-tabs" aria-label="Khu vực quản trị">
         {(
           [
-            ["overview", "Tổng quan"],
+            ["analysis", "Góc nhìn chờ duyệt"],
             ["content", "Nội dung"],
             ["sources", "Nguồn tin"],
             ["jobs", "Tác vụ nền"],
+            ["overview", "Hệ thống"],
           ] as const
         ).map(([key, label]) => (
           <button className={view === key ? "active" : ""} onClick={() => setView(key)} key={key}>
             {label}
           </button>
         ))}
-        <Link href="/admin/goc-nhin">Bàn phân tích →</Link>
+        <Link className="admin-tab-cta" href="/admin/goc-nhin">
+          Mở bàn phân tích đầy đủ →
+        </Link>
       </nav>
 
       {message ? <div className="admin-message">{message}</div> : null}
 
+      {view === "analysis" ? (
+        <div className="admin-editorial-view">
+          <AnalysisDesk focus="review" />
+        </div>
+      ) : null}
+
       {view === "overview" ? (
         <>
           <div className="admin-metrics">
-            <Metric value={totals.review} label="Chờ biên tập" tone="orange" />
+            <Metric value={totals.review} label="Tin thường chờ duyệt" tone="orange" />
             <Metric value={totals.pending} label="Đang chờ chạy" tone="blue" />
             <Metric value={totals.running} label="Đang xử lý" tone="green" />
-            <Metric value={totals.dead} label="Cần can thiệp" tone="red" />
+            <Metric value={recentFailedJobs.length} label="Lỗi mới trong 24 giờ" tone="red" />
           </div>
           <div className="admin-overview-grid">
             <div className="admin-panel">
@@ -179,11 +196,7 @@ export function AdminConsole({ initialView = "overview" }: { initialView?: View 
             </div>
             <div className="admin-panel">
               <PanelTitle eyebrow="SỨC KHỎE HỆ THỐNG" title="Tác vụ cần chú ý" />
-              <JobRows
-                jobs={jobs.filter((job) => ["dead", "failed"].includes(job.status)).slice(0, 7)}
-                busy={busy}
-                act={act}
-              />
+              <JobRows jobs={recentFailedJobs.slice(0, 7)} busy={busy} act={act} />
             </div>
           </div>
           {usage ? <LLMUsagePanel usage={usage} /> : null}

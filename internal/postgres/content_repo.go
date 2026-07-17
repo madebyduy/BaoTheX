@@ -719,11 +719,28 @@ JOIN sources s ON s.id=c.source_id
 WHERE c.status='ready'
   AND c.published_at > now() - interval '30 days'
   AND NOT EXISTS (SELECT 1 FROM hidden_items h WHERE h.user_id=$1 AND h.content_id=c.id)
+  AND NOT EXISTS (SELECT 1 FROM user_source_mutes sm WHERE sm.user_id=$1 AND sm.source_id=c.source_id)
   AND NOT EXISTS (
       SELECT 1 FROM content_topics ct
       JOIN user_topic_mutes m ON m.topic_id=ct.topic_id
       WHERE ct.content_id=c.id AND m.user_id=$1)
-ORDER BY (
+ORDER BY
+  CASE WHEN
+    EXISTS (
+        SELECT 1 FROM content_topics ct
+        JOIN user_topic_follows utf ON utf.topic_id=ct.topic_id
+        WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_feed
+          AND (NOT utf.highlights_only OR c.final_score >= 40))
+    OR EXISTS (
+        SELECT 1 FROM content_entities ce
+        JOIN user_entity_follows uef ON uef.entity_id=ce.entity_id
+        WHERE ce.content_id=c.id AND uef.user_id=$1 AND uef.in_feed
+          AND (NOT uef.highlights_only OR c.final_score >= 40))
+    OR EXISTS (
+        SELECT 1 FROM user_source_follows usf
+        WHERE usf.source_id=c.source_id AND usf.user_id=$1)
+    THEN 1 ELSE 0 END DESC,
+  (
     c.final_score
     + COALESCE((SELECT MAX(22 + LEAST(GREATEST(utf.priority, 0), 3) * 5)
         FROM content_topics ct
@@ -768,6 +785,7 @@ func (r *ContentRepo) FollowingFeed(ctx context.Context, userID int64, limit, of
 		      WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_feed
 		        AND (NOT utf.highlights_only OR c.final_score >= 40))
 		  AND NOT EXISTS (SELECT 1 FROM hidden_items h WHERE h.user_id=$1 AND h.content_id=c.id)
+		  AND NOT EXISTS (SELECT 1 FROM user_source_mutes sm WHERE sm.user_id=$1 AND sm.source_id=c.source_id)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM content_topics ct
 		      JOIN user_topic_mutes m ON m.topic_id=ct.topic_id
@@ -950,6 +968,15 @@ func (r *ContentRepo) IDsPendingTranslation(ctx context.Context, limit int, minS
 // This is the deliberate exception to parking: once a cluster has won the day,
 // its materials are worth translating regardless of what each individual
 // headline scored, because the value is in the story, not the article.
+//
+// Readiness is judged on translation_status alone, never on content status. A
+// digested foreign article is deliberately 'ready' — the digest is what readers
+// get — while still holding no Vietnamese body for the desk to quote. Filtering
+// on c.status IN ('processing','needs_review') therefore skipped every digested
+// piece, so a cluster of foreign coverage was translated never, gathered zero
+// materials, and failed with "need 3 publishable sources, have 0". That is the
+// exact starvation the 'digested' status was introduced to prevent; it simply
+// arrived through the other column.
 func (r *ContentRepo) IDsPendingTranslationForCluster(ctx context.Context, clusterID int64, limit int) ([]int64, error) {
 	rows, err := r.db.Pool.Query(ctx, `
 		SELECT c.id FROM content_items c
@@ -958,7 +985,7 @@ func (r *ContentRepo) IDsPendingTranslationForCluster(ctx context.Context, clust
 		JOIN sources s ON s.id=c.source_id
 		WHERE sci.cluster_id=$1
 		  AND c.language <> 'vi'
-		  AND c.status IN ('processing','needs_review')
+		  AND c.status NOT IN ('failed','hidden')
 		  AND b.translation_status <> 'ready'
 		  AND length(trim(b.original_body)) > 0
 		ORDER BY s.quality DESC, c.final_score DESC

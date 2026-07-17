@@ -55,20 +55,52 @@ func (r *ContentRepo) DailyCandidates(ctx context.Context, userID int64, content
 	return collectContent(rows)
 }
 
-// WeeklyResearchCandidates returns notable research from the past week not yet
-// sent to the user.
-func (r *ContentRepo) WeeklyResearchCandidates(ctx context.Context, userID int64, limit int) ([]domain.ContentItem, error) {
+// FollowAlertCandidates returns fresh, ready items in topics or entities the
+// user follows for Telegram, excluding anything already sent in any digest.
+//
+// The window is deliberately short. An alert is a claim that something just
+// happened, so a story from yesterday morning does not qualify no matter how
+// well it scores — that is what the daily brief is for. Anything the alert does
+// send is recorded in digest_deliveries, which the daily brief already reads,
+// so a story cannot arrive twice by two routes.
+//
+// highlightsOnly raises the bar to the same score the rest of the newsroom
+// treats as "notable". Without it the floor is still not zero: an alert for
+// routine coverage is the fastest way to teach a reader to mute the bot.
+func (r *ContentRepo) FollowAlertCandidates(ctx context.Context, userID int64, highlightsOnly bool, limit int) ([]domain.ContentItem, error) {
+	minScore := 30.0
+	if highlightsOnly {
+		minScore = 40
+	}
 	rows, err := r.db.Pool.Query(ctx, `
 		SELECT `+contentCols+`, s.name
 		FROM content_items c
 		JOIN sources s ON s.id=c.source_id
-		WHERE c.status='ready' AND c.type='research'
-		  AND c.published_at > now() - interval '7 days'
+		WHERE c.status='ready'
+		  AND c.published_at > now() - interval '6 hours'
+		  AND c.final_score >= $2
+		  AND (
+		      EXISTS (
+		          SELECT 1 FROM content_topics ct
+		          JOIN user_topic_follows utf ON utf.topic_id=ct.topic_id
+		          WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_telegram
+		            AND (NOT utf.highlights_only OR c.final_score >= 40))
+		      OR EXISTS (
+		          SELECT 1 FROM content_entities ce
+		          JOIN user_entity_follows uef ON uef.entity_id=ce.entity_id
+		          WHERE ce.content_id=c.id AND uef.user_id=$1 AND uef.in_telegram
+		            AND (NOT uef.highlights_only OR c.final_score >= 40))
+		  )
 		  AND NOT EXISTS (
 		      SELECT 1 FROM digest_deliveries d
-		      WHERE d.user_id=$1 AND d.kind='weekly_research' AND c.id = ANY(d.content_ids))
+		      WHERE d.user_id=$1 AND c.id = ANY(d.content_ids))
+		  AND NOT EXISTS (SELECT 1 FROM hidden_items h WHERE h.user_id=$1 AND h.content_id=c.id)
+		  AND NOT EXISTS (
+		      SELECT 1 FROM content_topics ct
+		      JOIN user_topic_mutes m ON m.topic_id=ct.topic_id
+		      WHERE ct.content_id=c.id AND m.user_id=$1)
 		ORDER BY c.final_score DESC, c.published_at DESC
-		LIMIT $2`, userID, limit)
+		LIMIT $3`, userID, minScore, limit)
 	if err != nil {
 		return nil, err
 	}

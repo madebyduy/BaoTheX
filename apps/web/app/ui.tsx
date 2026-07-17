@@ -16,6 +16,9 @@ export function SiteHeader() {
   const path = usePathname();
   const links = [
     ["/", "Dòng tin"],
+    ["/ban-the-thao", "Bàn thể thao"],
+    ["/bat-kip", "Bắt kịp"],
+    ["/lich-the-thao", "Lịch"],
     ["/goc-nhin", "Góc nhìn"],
     ["/video", "Video"],
     ["/chu-de", "Chủ đề"],
@@ -34,17 +37,11 @@ export function SiteHeader() {
             </Link>
           ))}
         </nav>
-        <form className="search" action="/tim-kiem">
-          <span>⌕</span>
-          <input name="q" placeholder="Tìm kiếm nội dung…" />
-        </form>
+        <SearchBox />
         <Link className="premium-link" href="/premium">
           Premium
         </Link>
         <AccountNav path={path} />
-        <Link className="btn ember" href="/dang-nhap">
-          Đăng nhập
-        </Link>
       </div>
       <div className="ticker">
         <div className="wrap">
@@ -57,6 +54,75 @@ export function SiteHeader() {
         </div>
       </div>
     </header>
+  );
+}
+
+function SearchBox() {
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`${API}/api/v1/search/suggest?q=${encodeURIComponent(query)}`, {
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.json() : Promise.reject()))
+        .then((json) => {
+          const data = json.data ?? json;
+          const values = Array.isArray(data) ? data : data.suggestions || [];
+          setSuggestions(
+            values
+              .map((value: unknown) =>
+                typeof value === "string"
+                  ? value
+                  : String(
+                      (value as { name?: string; text?: string; title?: string }).name ||
+                        (value as { text?: string }).text ||
+                        (value as { title?: string }).title ||
+                        "",
+                    ),
+              )
+              .filter(Boolean)
+              .slice(0, 6),
+          );
+        })
+        .catch(() => null);
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
+  return (
+    <div className="search-wrap">
+      <form className="search" action="/tim-kiem">
+        <span>⌕</span>
+        <input
+          name="q"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Tìm đội, VĐV, nội dung…"
+          autoComplete="off"
+        />
+      </form>
+      {suggestions.length ? (
+        <div className="search-suggestions">
+          {suggestions.map((value) => (
+            <Link
+              href={`/tim-kiem?q=${encodeURIComponent(value)}`}
+              key={value}
+              onClick={() => setSuggestions([])}
+            >
+              {value}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

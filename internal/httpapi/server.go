@@ -94,6 +94,14 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+v1+"/home", s.handleHome)
 	mux.HandleFunc("GET "+v1+"/capabilities", s.handlePublicCapabilities)
 	mux.HandleFunc("GET "+v1+"/audio-briefs/latest", s.handleLatestAudioBrief)
+	mux.HandleFunc("GET "+v1+"/sports", s.handleSports)
+	mux.HandleFunc("GET "+v1+"/competitions", s.handleCompetitions)
+	mux.HandleFunc("GET "+v1+"/events", s.handleEvents)
+	mux.HandleFunc("GET "+v1+"/events/{id}", s.handleEvent)
+	mux.HandleFunc("GET "+v1+"/events/{id}/content", s.handleEventContent)
+	mux.HandleFunc("GET "+v1+"/events/{id}/calendar.ics", s.handleEventCalendar)
+	mux.HandleFunc("GET "+v1+"/catch-up", s.handleCatchUp)
+	mux.HandleFunc("POST "+v1+"/product-events", s.handleProductEvent)
 	mux.HandleFunc("POST "+v1+"/payments/sepay/ipn", s.handleSePayIPN)
 
 	// ---- Auth ----
@@ -106,6 +114,17 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	// ---- Feed ----
 	mux.HandleFunc("GET "+v1+"/feed", requireAuth(s.handleFeed))
+	mux.HandleFunc("GET "+v1+"/me/dashboard", requireAuth(s.handleDashboard))
+	mux.HandleFunc("PATCH "+v1+"/me/dashboard", requireAuth(s.handleDashboard))
+	mux.HandleFunc("POST "+v1+"/me/preferences/sync", requireAuth(s.handlePreferenceSync))
+	mux.HandleFunc("GET "+v1+"/me/fan-passport", requireAuth(s.handleFanPassport))
+	mux.HandleFunc("POST "+v1+"/clusters/{id}/follow", requireAuth(s.handleFollowCluster))
+	mux.HandleFunc("DELETE "+v1+"/clusters/{id}/follow", requireAuth(s.handleFollowCluster))
+	mux.HandleFunc("POST "+v1+"/clusters/{id}/read", requireAuth(s.handleReadCluster))
+	mux.HandleFunc("POST "+v1+"/events/{id}/follow", requireAuth(s.handleFollowEvent))
+	mux.HandleFunc("DELETE "+v1+"/events/{id}/follow", requireAuth(s.handleFollowEvent))
+	mux.HandleFunc("GET "+v1+"/predictions", requireAuth(s.handlePredictions))
+	mux.HandleFunc("POST "+v1+"/predictions/{id}/answer", requireAuth(s.handlePredictionAnswer))
 	mux.HandleFunc("GET "+v1+"/premium/status", requireAuth(s.handlePremiumStatus))
 	mux.HandleFunc("POST "+v1+"/premium/checkout", requireAuth(s.handlePremiumCheckout))
 	mux.HandleFunc("POST "+v1+"/push/subscribe", requireAuth(s.handlePushSubscribe))
@@ -114,6 +133,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	// ---- Follows ----
 	mux.HandleFunc("GET "+v1+"/follows", requireAuth(s.handleListFollows))
+	mux.HandleFunc("GET "+v1+"/follows/status", requireAuth(s.handleFollowStatus))
 	mux.HandleFunc("POST "+v1+"/follows/topics/{id}", requireAuth(s.handleFollowTopic))
 	mux.HandleFunc("DELETE "+v1+"/follows/topics/{id}", requireAuth(s.handleUnfollowTopic))
 	mux.HandleFunc("PATCH "+v1+"/follows/topics/{id}", requireAuth(s.handlePatchTopicFollow))
@@ -126,11 +146,14 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// ---- Mutes ----
 	mux.HandleFunc("POST "+v1+"/mutes/topics/{id}", requireAuth(s.handleMuteTopic))
 	mux.HandleFunc("DELETE "+v1+"/mutes/topics/{id}", requireAuth(s.handleUnmuteTopic))
+	mux.HandleFunc("POST "+v1+"/mutes/sources/{id}", requireAuth(s.handleMuteSource))
+	mux.HandleFunc("DELETE "+v1+"/mutes/sources/{id}", requireAuth(s.handleUnmuteSource))
 
 	// ---- Save / collections / history / hidden ----
 	mux.HandleFunc("POST "+v1+"/saved/{id}", requireAuth(s.handleSave))
 	mux.HandleFunc("DELETE "+v1+"/saved/{id}", requireAuth(s.handleUnsave))
 	mux.HandleFunc("GET "+v1+"/saved", requireAuth(s.handleListSaved))
+	mux.HandleFunc("GET "+v1+"/saved/{id}/status", requireAuth(s.handleSavedStatus))
 	mux.HandleFunc("GET "+v1+"/collections", requireAuth(s.handleListCollections))
 	mux.HandleFunc("POST "+v1+"/collections", requireAuth(s.handleCreateCollection))
 	mux.HandleFunc("DELETE "+v1+"/collections/{id}", requireAuth(s.handleDeleteCollection))
@@ -178,6 +201,12 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+v1+"/admin/topics", requireAdmin(s.handleAdminListTopics))
 	mux.HandleFunc("POST "+v1+"/admin/topics", requireAdmin(s.handleAdminCreateTopic))
 	mux.HandleFunc("PATCH "+v1+"/admin/topics/{id}", requireAdmin(s.handleAdminUpdateTopic))
+	mux.HandleFunc("POST "+v1+"/admin/events", requireAdmin(s.handleAdminEvents))
+	mux.HandleFunc("PATCH "+v1+"/admin/events/{id}", requireAdmin(s.handleAdminEvent))
+	mux.HandleFunc("POST "+v1+"/admin/events/{id}/result", requireAdmin(s.handleAdminEventResult))
+	mux.HandleFunc("POST "+v1+"/admin/predictions", requireAdmin(s.handleAdminPredictions))
+	mux.HandleFunc("PATCH "+v1+"/admin/predictions/{id}", requireAdmin(s.handleAdminPrediction))
+	mux.HandleFunc("POST "+v1+"/admin/predictions/{id}/settle", requireAdmin(s.handleAdminSettlePrediction))
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

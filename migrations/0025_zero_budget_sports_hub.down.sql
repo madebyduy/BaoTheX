@@ -1,0 +1,12 @@
+DROP TABLE IF EXISTS product_events;
+DROP TABLE IF EXISTS prediction_answers;
+DROP TABLE IF EXISTS predictions;
+DROP TABLE IF EXISTS story_cluster_reads;
+DROP TABLE IF EXISTS story_cluster_follows;
+DROP TABLE IF EXISTS user_dashboard_layouts;
+DROP TABLE IF EXISTS user_source_mutes;
+DROP TABLE IF EXISTS user_event_follows;
+DROP TABLE IF EXISTS event_content_links;
+DROP TABLE IF EXISTS sports_events;
+DROP TABLE IF EXISTS sports_competitions;
+DROP TABLE IF EXISTS sports;

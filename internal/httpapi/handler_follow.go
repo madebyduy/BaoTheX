@@ -2,9 +2,22 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
 
 	"repwire/internal/domain"
 )
+
+func (s *Server) handleFollowStatus(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	topicID, _ := strconv.ParseInt(r.URL.Query().Get("topic_id"), 10, 64)
+	entityID, _ := strconv.ParseInt(r.URL.Query().Get("entity_id"), 10, 64)
+	following, err := s.db.Follow.FollowStatus(r.Context(), u.ID, topicID, entityID)
+	if err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"following": following}, nil)
+}
 
 func (s *Server) handleListFollows(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
@@ -166,6 +179,34 @@ func (s *Server) handleUnmuteTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.db.Follow.UnmuteTopic(r.Context(), u.ID, id); err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"muted": false}, nil)
+}
+
+func (s *Server) handleMuteSource(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	id, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid id")
+		return
+	}
+	if err := s.db.Follow.MuteSource(r.Context(), u.ID, id); err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"muted": true}, nil)
+}
+
+func (s *Server) handleUnmuteSource(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	id, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid id")
+		return
+	}
+	if err := s.db.Follow.UnmuteSource(r.Context(), u.ID, id); err != nil {
 		writeDomainError(w, s.log, err)
 		return
 	}

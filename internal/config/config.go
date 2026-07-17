@@ -23,6 +23,11 @@ type Config struct {
 
 	// Worker
 	WorkerConcurrency int
+	SportsDataMode    string
+	FootballDataToken string
+	PandaScoreToken   string
+	OpenF1Enabled     bool
+	TheSportsDBKey    string
 
 	// YouTube
 	YouTubeAPIKey string
@@ -60,10 +65,17 @@ type Config struct {
 	PremiumMonthlyPrice int
 
 	// LLM
-	LLMAPIKey            string   // first key; kept for single-key callers (e.g. TTS default)
-	LLMAPIKeys           []string // full rotation pool: tried in order, next on quota exhaustion
-	LLMBaseURL           string
-	LLMModel             string
+	LLMAPIKey  string   // first key; kept for single-key callers (e.g. TTS default)
+	LLMAPIKeys []string // full rotation pool: tried in order, next on quota exhaustion
+	LLMBaseURL string
+	LLMModel   string
+	// LLMInputUSDPerMTok / LLMOutputUSDPerMTok price the daily budget meter and
+	// must describe the provider behind LLM_BASE_URL. The defaults match the
+	// default model (Anthropic Haiku-class); a free tier should set both to 0,
+	// because a meter that charges for calls the provider gives away will stop
+	// work over money that was never spent.
+	LLMInputUSDPerMTok   float64
+	LLMOutputUSDPerMTok  float64
 	LLMDailyBudgetUSD    float64
 	LLMScoreThreshold    float64
 	LLMTranslateMinScore float64
@@ -83,9 +95,21 @@ type Config struct {
 	LLMMaxCallsPerMinute int
 
 	// Editorial
-	// DailyPickHour is the hour (Vietnam time) at which the newsroom stops
-	// watching and commits its LLM budget to the single hottest story of the day.
-	DailyPickHour int
+	// EditorialStartHour is the hour (Vietnam time) from which the desk may
+	// commit to a story. Before it, the day's headlines have not been
+	// corroborated or followed up enough for the ranking to tell a real
+	// controversy from one that is merely loud.
+	//
+	// It was DAILY_PICK_HOUR=21, and it meant something narrower: the single
+	// moment the newsroom stopped watching and spent its whole LLM budget on one
+	// story. That budget was a fiction produced by a pricing bug, and one article
+	// an evening was all the fiction could afford. The desk now opens in the
+	// morning and commits to EditorialPicksPerDay stories as the day earns them.
+	EditorialStartHour int
+	// EditorialPicksPerDay caps how many stories a day get an analysis. Each is
+	// a couple of LLM calls plus translating its sources; the limiting factor is
+	// the human who reviews the drafts, not the quota.
+	EditorialPicksPerDay int
 
 	// Logging
 	LogFormat string
@@ -117,6 +141,11 @@ func Load() (*Config, error) {
 		APIAddr:               env("API_ADDR", ":8080"),
 		CORSOrigins:           splitCSV(env("CORS_ORIGINS", "http://localhost:3000")),
 		WorkerConcurrency:     envInt("WORKER_CONCURRENCY", 8),
+		SportsDataMode:        env("SPORTS_DATA_MODE", "free"),
+		FootballDataToken:     env("FOOTBALL_DATA_TOKEN", ""),
+		PandaScoreToken:       env("PANDASCORE_TOKEN", ""),
+		OpenF1Enabled:         envBool("OPENF1_ENABLED", true),
+		TheSportsDBKey:        env("THESPORTSDB_KEY", "123"),
 		YouTubeAPIKey:         env("YOUTUBE_API_KEY", ""),
 		TelegramBotToken:      env("TELEGRAM_BOT_TOKEN", ""),
 		TelegramWebhookSecret: env("TELEGRAM_WEBHOOK_SECRET", ""),
@@ -140,13 +169,16 @@ func Load() (*Config, error) {
 		LLMAPIKeys:            llmKeys,
 		LLMBaseURL:            env("LLM_BASE_URL", "https://api.anthropic.com/v1/messages"),
 		LLMModel:              env("LLM_MODEL", "claude-haiku-4-5-20251001"),
+		LLMInputUSDPerMTok:    envFloat("LLM_INPUT_USD_PER_MTOK", 1),
+		LLMOutputUSDPerMTok:   envFloat("LLM_OUTPUT_USD_PER_MTOK", 5),
 		LLMDailyBudgetUSD:     envFloat("LLM_DAILY_BUDGET_USD", 5),
 		LLMScoreThreshold:     envFloat("LLM_SCORE_THRESHOLD", 25),
 		LLMTranslateMinScore:  envFloat("LLM_TRANSLATE_MIN_SCORE", 30),
 		LLMTranslateMaxAge:    time.Duration(envInt("LLM_TRANSLATE_MAX_AGE_HOURS", 36)) * time.Hour,
 		LLMMaxCallsPerHour:    envInt("LLM_MAX_CALLS_PER_HOUR", 120),
 		LLMMaxCallsPerMinute:  envInt("LLM_MAX_CALLS_PER_MINUTE", 4),
-		DailyPickHour:         envInt("DAILY_PICK_HOUR", 21),
+		EditorialStartHour:    envInt("EDITORIAL_START_HOUR", 9),
+		EditorialPicksPerDay:  envInt("EDITORIAL_PICKS_PER_DAY", 3),
 		LogFormat:             env("LOG_FORMAT", "json"),
 		LogLevel:              env("LOG_LEVEL", "info"),
 	}
@@ -157,8 +189,11 @@ func Load() (*Config, error) {
 	if c.SessionSecret == "" {
 		return nil, fmt.Errorf("SESSION_SECRET is required")
 	}
-	if c.DailyPickHour < 0 || c.DailyPickHour > 23 {
-		return nil, fmt.Errorf("DAILY_PICK_HOUR must be between 0 and 23, got %d", c.DailyPickHour)
+	if c.EditorialStartHour < 0 || c.EditorialStartHour > 23 {
+		return nil, fmt.Errorf("EDITORIAL_START_HOUR must be between 0 and 23, got %d", c.EditorialStartHour)
+	}
+	if c.EditorialPicksPerDay < 1 {
+		return nil, fmt.Errorf("EDITORIAL_PICKS_PER_DAY must be at least 1, got %d", c.EditorialPicksPerDay)
 	}
 	if c.LLMTranslateMaxAge <= 0 {
 		return nil, fmt.Errorf("LLM_TRANSLATE_MAX_AGE_HOURS must be positive, got %v", c.LLMTranslateMaxAge)

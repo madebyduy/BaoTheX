@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"repwire/internal/postgres"
 	"repwire/internal/process"
 	"repwire/internal/ratelimit"
+	"repwire/internal/sportsdata"
 	"repwire/internal/telegram"
 )
 
@@ -40,7 +42,7 @@ func main() {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	enqueue := jobs.NewEnqueuer(db.Job)
 	tgClient := telegram.NewClient(cfg.TelegramBotToken)
-	tgHandler := telegram.NewHandler(db, tgClient, enqueue)
+	tgHandler := telegram.NewHandler(db, tgClient, enqueue, cfg.PublicBaseURL)
 	if cfg.TelegramPolling && tgClient.Enabled() {
 		go tgClient.Poll(ctx, tgHandler, func(err error) {
 			log.Error("telegram polling failed", "err", err)
@@ -56,14 +58,16 @@ func main() {
 	ttsPacer := ratelimit.NewPacer(cfg.TTSMaxCallsPerMinute)
 
 	handlers := &jobs.Handlers{
-		DB:                db,
-		Enqueue:           enqueue,
-		Log:               log,
-		RSS:               ingest.NewRSSFetcher(httpClient),
-		YouTube:           ingest.NewYouTubeFetcher(httpClient, cfg.YouTubeAPIKey, db),
-		PMC:               ingest.NewEuropePMCFetcher(httpClient),
-		Podcast:           ingest.NewPodcastFetcher(httpClient),
-		Summarizer:        process.NewSummarizer(cfg.LLMAPIKeys, cfg.LLMBaseURL, cfg.LLMModel, cfg.LLMDailyBudgetUSD, cfg.LLMMaxCallsPerHour, db.LLM(), llmPacer),
+		DB:      db,
+		Enqueue: enqueue,
+		Log:     log,
+		RSS:     ingest.NewRSSFetcher(httpClient),
+		YouTube: ingest.NewYouTubeFetcher(httpClient, cfg.YouTubeAPIKey, db),
+		PMC:     ingest.NewEuropePMCFetcher(httpClient),
+		Podcast: ingest.NewPodcastFetcher(httpClient),
+		Summarizer: process.NewSummarizer(cfg.LLMAPIKeys, cfg.LLMBaseURL, cfg.LLMModel,
+			process.Pricing{InputUSDPerMTok: cfg.LLMInputUSDPerMTok, OutputUSDPerMTok: cfg.LLMOutputUSDPerMTok},
+			cfg.LLMDailyBudgetUSD, cfg.LLMMaxCallsPerHour, db.LLM(), llmPacer),
 		Telegram:          tgClient,
 		Digest:            telegram.NewDigest(db, cfg.PublicBaseURL),
 		TTS:               briefmedia.NewTTS(cfg.TTSAPIKeys, cfg.TTSModel, cfg.TTSVoice, ttsPacer),
@@ -74,7 +78,19 @@ func main() {
 	}
 
 	worker := jobs.NewWorker(hostID(), db.Job, handlers.Register(), log)
-	scheduler := jobs.NewScheduler(db, enqueue, log, cfg.LLMTranslateMinScore, cfg.LLMTranslateMaxAge, cfg.DailyPickHour)
+	sportsMode := !strings.EqualFold(cfg.SportsDataMode, "off")
+	footballToken, pandaToken, sportsDBKey := cfg.FootballDataToken, cfg.PandaScoreToken, cfg.TheSportsDBKey
+	if !sportsMode {
+		footballToken, pandaToken, sportsDBKey = "", "", ""
+	}
+	sportsSync := sportsdata.NewSyncer(db.Sports, log,
+		sportsdata.NewFootballData(httpClient, footballToken),
+		sportsdata.NewPandaScore(httpClient, pandaToken),
+		sportsdata.NewOpenF1(httpClient, sportsMode && cfg.OpenF1Enabled),
+		sportsdata.NewTheSportsDB(httpClient, sportsDBKey),
+	)
+	scheduler := jobs.NewScheduler(db, enqueue, log, cfg.LLMTranslateMinScore, cfg.LLMTranslateMaxAge, cfg.EditorialStartHour, cfg.EditorialPicksPerDay, sportsSync)
+	scheduler.SetGenerationCapabilities(len(cfg.LLMAPIKeys) > 0, len(cfg.TTSAPIKeys) > 0)
 
 	go scheduler.Run(ctx)
 	worker.Run(ctx, cfg.WorkerConcurrency) // blocks until ctx is done

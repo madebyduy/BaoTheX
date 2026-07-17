@@ -37,7 +37,7 @@ func main() {
 
 	enqueue := jobs.NewEnqueuer(db.Job)
 	tgClient := telegram.NewClient(cfg.TelegramBotToken)
-	tgHook := telegram.NewHandler(db, tgClient, enqueue)
+	tgHook := telegram.NewHandler(db, tgClient, enqueue, cfg.PublicBaseURL)
 
 	srv := httpapi.NewServer(db, cfg, log, enqueue, tgClient, tgHook)
 

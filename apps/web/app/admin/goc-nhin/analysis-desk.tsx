@@ -33,7 +33,28 @@ function isTodaysPick(item: Candidate): boolean {
   return Boolean(item.picked_for_date?.startsWith(newsroomToday()));
 }
 
-export function AnalysisDesk() {
+// Editors read these badges, not the database enum. "NEEDS REVIEW" told them
+// nothing about whether they had to act.
+function statusLabel(status: string) {
+  switch (status) {
+    case "needs_review":
+      return "Chờ bạn duyệt";
+    case "drafting":
+      return "Đang viết nháp";
+    case "published":
+      return "Đã xuất bản";
+    case "proposed":
+      return "Mới đề cử";
+    case "dismissed":
+      return "Đã bỏ qua";
+    case "failed":
+      return "Viết lỗi";
+    default:
+      return status.replaceAll("_", " ");
+  }
+}
+
+export function AnalysisDesk({ focus = "all" }: { focus?: "all" | "review" }) {
   const [items, setItems] = useState<Candidate[]>([]);
   const [message, setMessage] = useState("");
   const [editor, setEditor] = useState<{
@@ -134,6 +155,10 @@ export function AnalysisDesk() {
 
   const pick = items.find(isTodaysPick);
   const rest = items.filter((item) => !isTodaysPick(item));
+  const waitingReview = items.filter((item) => item.status === "needs_review");
+  const inProgress = items.filter((item) =>
+    ["proposed", "drafting", "failed"].includes(item.status),
+  );
 
   return (
     <section className="analysis-desk">
@@ -181,7 +206,74 @@ export function AnalysisDesk() {
           </div>
         </div>
       ) : null}
-      {pick ? (
+      {focus === "review" ? (
+        <>
+          <div className="analysis-review-summary">
+            <div>
+              <strong>{waitingReview.length}</strong>
+              <span>Bản nháp chờ bạn duyệt</span>
+            </div>
+            <div>
+              <strong>{inProgress.length}</strong>
+              <span>Chủ đề đang chuẩn bị</span>
+            </div>
+            <p>
+              Chỉ bản nháp đã sẵn sàng mới nằm trong hàng duyệt. Tin nhập tự động và lỗi worker đã
+              được chuyển sang các tab vận hành riêng.
+            </p>
+          </div>
+
+          <div className="analysis-section-head">
+            <div>
+              <span>ƯU TIÊN HÔM NAY</span>
+              <h3>Bản nháp cần quyết định</h3>
+            </div>
+            <b>{waitingReview.length} bài</b>
+          </div>
+          {waitingReview.map((item) => (
+            <CandidateCard
+              key={item.id}
+              item={item}
+              featured={isTodaysPick(item)}
+              onEdit={openEditor}
+              onAction={action}
+              onPublish={publish}
+            />
+          ))}
+          {!waitingReview.length ? (
+            <div className="analysis-review-empty">
+              <b>Không còn bản nháp nào đang chờ duyệt.</b>
+              <span>Các chủ đề đủ điều kiện sẽ tự xuất hiện ở đây sau khi tạo xong bản nháp.</span>
+            </div>
+          ) : null}
+
+          {inProgress.length ? (
+            <div className="analysis-section-head secondary">
+              <div>
+                <span>THEO DÕI</span>
+                <h3>Đang chuẩn bị thành bản nháp</h3>
+              </div>
+              <b>
+                {Math.min(6, inProgress.length)} / {inProgress.length} chủ đề
+              </b>
+            </div>
+          ) : null}
+          {inProgress.slice(0, 6).map((item) => (
+            <CandidateCard
+              key={item.id}
+              item={item}
+              onEdit={openEditor}
+              onAction={action}
+              onPublish={publish}
+            />
+          ))}
+          {inProgress.length > 6 ? (
+            <a className="analysis-more-link" href="/admin/goc-nhin">
+              Xem toàn bộ {inProgress.length} chủ đề tại Bàn phân tích →
+            </a>
+          ) : null}
+        </>
+      ) : pick ? (
         <div className="daily-pick">
           <div className="daily-pick-head">
             <b>Chủ đề nóng nhất hôm nay</b>
@@ -197,21 +289,25 @@ export function AnalysisDesk() {
         </div>
       ) : (
         <p className="daily-pick-empty">
-          Hôm nay chưa chốt chủ đề. Hệ thống quét và chọn vào cuối ngày; nếu không chủ đề nào
-          đủ nóng thì sẽ không viết bài — đó là chủ ý, không phải lỗi.
+          Hôm nay chưa chốt chủ đề. Hệ thống quét và chọn vào cuối ngày; nếu không chủ đề nào đủ
+          nóng thì sẽ không viết bài — đó là chủ ý, không phải lỗi.
         </p>
       )}
 
-      {rest.length ? <h3 className="candidate-rest-head">Các chủ đề khác đang theo dõi</h3> : null}
-      {rest.map((item) => (
-        <CandidateCard
-          key={item.id}
-          item={item}
-          onEdit={openEditor}
-          onAction={action}
-          onPublish={publish}
-        />
-      ))}
+      {focus === "all" && rest.length ? (
+        <h3 className="candidate-rest-head">Các chủ đề khác đang theo dõi</h3>
+      ) : null}
+      {focus === "all"
+        ? rest.map((item) => (
+            <CandidateCard
+              key={item.id}
+              item={item}
+              onEdit={openEditor}
+              onAction={action}
+              onPublish={publish}
+            />
+          ))
+        : null}
       {!items.length && !message ? <p>Chưa có cluster đạt ngưỡng đề cử.</p> : null}
     </section>
   );
@@ -230,15 +326,32 @@ function CandidateCard({
   onAction: (clusterID: number, name: "generate" | "dismiss") => Promise<void>;
   onPublish: (clusterID: number) => Promise<void>;
 }) {
+  // The gauge fills relative to a 150-point ceiling, which is where real heat
+  // scores top out; without it every card's bar looked identical.
+  const heat = Math.max(6, Math.min(100, Math.round((item.score / 150) * 100)));
   return (
-    <article className={featured ? "candidate-card featured" : "candidate-card"}>
+    <article
+      className={featured ? "candidate-card featured" : "candidate-card"}
+      style={{ "--heat": `${heat}%` } as React.CSSProperties}
+    >
       <div className="candidate-score">
         <strong>{Math.round(item.score)}</strong>
         <span>ĐỘ NÓNG</span>
       </div>
       <div className="candidate-copy">
-        <small>{item.status.replaceAll("_", " ").toUpperCase()}</small>
-        <h2>{item.representative_title}</h2>
+        <small className={`st-${item.status}`}>{statusLabel(item.status)}</small>
+        {/* A draft exists → the headline opens it. Editors kept saying they
+            could not click into anything, because the title was plain text and
+            the only way in was a small secondary button. */}
+        {item.draft_content_id ? (
+          <h2>
+            <a className="candidate-title-link" href={`/admin/preview/${item.draft_content_id}`}>
+              {item.representative_title}
+            </a>
+          </h2>
+        ) : (
+          <h2>{item.representative_title}</h2>
+        )}
         <div className="candidate-metrics">
           <span>{item.source_count} nguồn độc lập</span>
           <span>{item.high_quality_sources} nguồn uy tín</span>
@@ -272,12 +385,18 @@ function CandidateCard({
       <div className="candidate-actions">
         {item.draft_content_id ? (
           <>
-            <button className="quiet" onClick={() => void onEdit(item.draft_content_id!, item.cluster_id)}>
+            <button
+              className="quiet"
+              onClick={() => void onEdit(item.draft_content_id!, item.cluster_id)}
+            >
               Đọc & sửa bản nháp
             </button>
             {item.status === "needs_review" ? (
               <>
-                <button className="quiet" onClick={() => void onAction(item.cluster_id, "generate")}>
+                <button
+                  className="quiet"
+                  onClick={() => void onAction(item.cluster_id, "generate")}
+                >
                   Tạo lại bản đầy đủ
                 </button>
                 <button onClick={() => void onPublish(item.cluster_id)}>Duyệt nhanh</button>

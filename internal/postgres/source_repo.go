@@ -15,7 +15,7 @@ type SourceRepo struct{ db *DB }
 
 const sourceCols = `id, kind, name, homepage_url, feed_url, quality, default_lang, enabled,
 	extract(epoch from fetch_interval)::bigint, etag, last_modified, uploads_playlist_id,
-	last_fetched_at, last_error, consecutive_failures, created_at`
+	last_fetched_at, last_error, consecutive_failures, created_at, default_topic_id`
 
 // sourceColsAliased returns the source columns qualified with a table alias,
 // used when sources is joined with other tables. Scan order matches scanSource.
@@ -24,7 +24,7 @@ func sourceColsAliased(a string) string {
 		a + `.quality, ` + a + `.default_lang, ` + a + `.enabled, ` +
 		`extract(epoch from ` + a + `.fetch_interval)::bigint, ` + a + `.etag, ` + a + `.last_modified, ` +
 		a + `.uploads_playlist_id, ` + a + `.last_fetched_at, ` + a + `.last_error, ` +
-		a + `.consecutive_failures, ` + a + `.created_at`
+		a + `.consecutive_failures, ` + a + `.created_at, ` + a + `.default_topic_id`
 }
 
 func scanSource(row pgx.Row) (*domain.Source, error) {
@@ -33,7 +33,7 @@ func scanSource(row pgx.Row) (*domain.Source, error) {
 	if err := row.Scan(&s.ID, &s.Kind, &s.Name, &s.HomepageURL, &s.FeedURL, &s.Quality,
 		&s.DefaultLang, &s.Enabled, &intervalSec, &s.ETag, &s.LastModified,
 		&s.UploadsPlaylistID, &s.LastFetchedAt, &s.LastError, &s.ConsecutiveFailures,
-		&s.CreatedAt); err != nil {
+		&s.CreatedAt, &s.DefaultTopicID); err != nil {
 		return nil, err
 	}
 	s.FetchInterval = time.Duration(intervalSec) * time.Second

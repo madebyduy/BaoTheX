@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { api, type ContentBody, type Item, typeLabel } from "../../lib";
+import { api, type ContentBody, type Item, type Topic, typeLabel } from "../../lib";
 import { Footer } from "../../ui";
 import { LikeButton, SaveButton, ShareBar } from "../../action-buttons";
+import { ReadingTracker } from "../../product-analytics";
+import { ContentFeedback } from "../../content-feedback";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://baothex.vn";
 // generateMetadata and the page both need the article. Using the SAME revalidate
@@ -12,6 +14,7 @@ const ARTICLE_REVALIDATE = 60;
 
 type Detail = {
   item?: Item;
+  topics?: Topic[];
   body?: ContentBody;
   article?: { author?: string; word_count?: number };
   video?: {
@@ -87,6 +90,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   ]);
   if (!data.item) notFound();
   const item = data.item;
+  const tracker = <ReadingTracker contentId={item.id} />;
   const body = data.body;
   // A foreign article is summarised, never reproduced.
   //
@@ -137,6 +141,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   };
   return (
     <>
+      {tracker}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
@@ -162,6 +167,11 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           <SaveButton contentId={item.id} />
           <ShareBar title={item.title} />
         </div>
+        <ContentFeedback
+          contentId={item.id}
+          sourceId={item.source_id}
+          topicId={data.topics?.[0]?.id}
+        />
         <div className="article-layout">
           <aside className="article-aside">
             <span className="eyebrow">THÔNG TIN BÀI</span>
@@ -236,7 +246,9 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
                       whole article — render the breaks. A native summary is one
                       short blurb above the real body, so it stays a single p. */}
                   {isForeign ? (
-                    splitParagraphs(item.summary).map((p, i) => <p key={`${i}-${p.slice(0, 12)}`}>{p}</p>)
+                    splitParagraphs(item.summary).map((p, i) => (
+                      <p key={`${i}-${p.slice(0, 12)}`}>{p}</p>
+                    ))
                   ) : (
                     <p>{item.summary}</p>
                   )}

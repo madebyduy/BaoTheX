@@ -63,8 +63,8 @@ func (r *SearchRepo) MatchingTopics(ctx context.Context, query string, limit int
 		          JOIN content_items c ON c.id=ct.content_id
 		          WHERE ct.topic_id=t.id AND c.status='ready') AS content_count
 		FROM topics t
-		WHERE t.name % $1 OR t.slug ILIKE '%'||$1||'%'
-		ORDER BY similarity(t.name,$1) DESC LIMIT $2`, query, limit)
+		WHERE t.name % $1 OR t.slug ILIKE '%'||$1||'%' OR unaccent(t.name) ILIKE '%'||unaccent($1)||'%'
+		ORDER BY GREATEST(similarity(t.name,$1), similarity(unaccent(t.name),unaccent($1))) DESC LIMIT $2`, query, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -84,8 +84,9 @@ func (r *SearchRepo) MatchingTopics(ctx context.Context, query string, limit int
 func (r *SearchRepo) MatchingEntities(ctx context.Context, query string, limit int) ([]EntityHit, error) {
 	rows, err := r.db.Pool.Query(ctx, `
 		SELECT slug, name, kind::text FROM entities
-		WHERE name % $1 OR slug ILIKE '%'||$1||'%'
-		ORDER BY similarity(name,$1) DESC LIMIT $2`, query, limit)
+		WHERE name % $1 OR slug ILIKE '%'||$1||'%' OR unaccent(name) ILIKE '%'||unaccent($1)||'%'
+		   OR EXISTS(SELECT 1 FROM unnest(aliases) AS a(value) WHERE unaccent(a.value) ILIKE '%'||unaccent($1)||'%')
+		ORDER BY GREATEST(similarity(name,$1), similarity(unaccent(name),unaccent($1))) DESC LIMIT $2`, query, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -112,9 +113,9 @@ type Suggestion struct {
 // Suggest returns autocomplete suggestions across topics and entities.
 func (r *SearchRepo) Suggest(ctx context.Context, query string, limit int) ([]Suggestion, error) {
 	rows, err := r.db.Pool.Query(ctx, `
-		(SELECT 'topic'::text AS kind, slug, name, similarity(name,$1) AS sim FROM topics   WHERE name % $1)
+		(SELECT 'topic'::text AS kind, slug, name, GREATEST(similarity(name,$1),similarity(unaccent(name),unaccent($1))) AS sim FROM topics WHERE name % $1 OR unaccent(name) ILIKE '%'||unaccent($1)||'%')
 		UNION ALL
-		(SELECT 'entity'::text AS kind, slug, name, similarity(name,$1) AS sim FROM entities WHERE name % $1)
+		(SELECT 'entity'::text AS kind, slug, name, GREATEST(similarity(name,$1),similarity(unaccent(name),unaccent($1))) AS sim FROM entities WHERE name % $1 OR unaccent(name) ILIKE '%'||unaccent($1)||'%' OR EXISTS(SELECT 1 FROM unnest(aliases) AS a(value) WHERE unaccent(a.value) ILIKE '%'||unaccent($1)||'%'))
 		ORDER BY sim DESC LIMIT $2`, query, limit)
 	if err != nil {
 		return nil, err

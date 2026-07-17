@@ -124,7 +124,7 @@ func TestRankHotTopicsCarriesClusterThrough(t *testing.T) {
 	if got.Cluster.Velocity24h != 11 || got.Cluster.QualitySources != 4 {
 		t.Fatalf("cluster facts lost: %+v", got.Cluster)
 	}
-	if got.Heat < minDailyPickHeat {
-		t.Fatalf("heat %v below the bar %v", got.Heat, minDailyPickHeat)
+	if got.Heat < minPickHeat {
+		t.Fatalf("heat %v below the bar %v", got.Heat, minPickHeat)
 	}
 }

@@ -6,6 +6,7 @@ import {
   demoItems,
   demoTopics,
   type Item,
+  type SportsEvent,
   type Source,
   type Topic,
 } from "./lib";
@@ -26,7 +27,7 @@ export default async function Home() {
   const followingOnly = Boolean(preferences?.feed_following_only);
   // The ranked feed carries the personalization. Supporting newsroom blocks
   // stay public, and both requests run together to keep the homepage fast.
-  const [personalizedFeed, home] = await Promise.all([
+  const [personalizedFeed, followedFeed, home] = await Promise.all([
     isPersonalized
       ? apiWithCookie<Item[]>(
           `/feed?${followingOnly ? "strict=1&" : ""}per_page=50`,
@@ -34,22 +35,37 @@ export default async function Home() {
           cookieHeader,
         )
       : Promise.resolve([] as Item[]),
+    isPersonalized && !followingOnly
+      ? apiWithCookie<Item[]>("/feed?strict=1&per_page=50", [], cookieHeader)
+      : Promise.resolve([] as Item[]),
     followingOnly ? Promise.resolve({} as HomeData) : api<HomeData>("/home", {}),
   ]);
   const personalizedArticles = personalizedFeed.filter((item) => item.type === "article");
+  const followedArticles = (followingOnly ? personalizedFeed : followedFeed).filter(
+    (item) => item.type === "article",
+  );
+  // Fetch well past what the page shows, because uniqueStories collapses every
+  // article sharing a story_cluster_id down to one. That ratio is brutal and it
+  // gets worse the bigger the news is: 30 recent articles are 10 distinct
+  // stories right now, because a World Cup semi-final arrives as one story told
+  // by fifteen mastheads. The homepage asks for 30 stories and every section
+  // from latest.slice(18) down was being handed an empty array — the front page
+  // looked short of news while the database held 766 ready articles. 100 in
+  // yields ~62 distinct stories out, which fills the page with room to spare.
   const publicArticles = followingOnly
     ? []
     : await api<Item[]>(
-        "/content?type=article&per_page=30&sort=recent",
+        "/content?type=article&per_page=100&sort=recent",
         demoItems.filter((item) => item.type === "article"),
       );
   // A personalized feed may temporarily contain only videos while newly
   // followed topics are still being translated. Keep the newsroom populated
   // with recent public articles unless the user explicitly selected strict mode.
+  const preferredArticles = followedArticles.length ? followedArticles : personalizedArticles;
   const feed = followingOnly
-    ? personalizedArticles
-    : personalizedArticles.length
-      ? personalizedArticles
+    ? followedArticles
+    : preferredArticles.length
+      ? preferredArticles
       : publicArticles;
   const [videoFeed, sources, analyses] = await Promise.all([
     isPersonalized && personalizedFeed.length
@@ -72,29 +88,32 @@ export default async function Home() {
   );
   const fitnessVideos = diversifyVideos(uniqueItems(fitnessBatches.flat()), 8, 1);
   const generalVideos = diversifyVideos(uniqueItems(videoFeed), 9);
-  const latest = Array.from(
-    new Map(
-      [...feed, ...(home.today || []), ...(home.sports || [])]
-        .filter((item) => item.type === "article")
-        .map((item) => [item.id, item]),
-    ).values(),
+  const latest = uniqueStories(
+    Array.from(
+      new Map(
+        [
+          ...feed,
+          ...(!followingOnly && !followedArticles.length
+            ? [...(home.today || []), ...(home.sports || [])]
+            : []),
+        ]
+          .filter((item) => item.type === "article")
+          .map((item) => [item.id, item]),
+      ).values(),
+    ),
   ).slice(0, 30);
+  const latestKeys = new Set(latest.map(storyKey));
+  const truthAnalyses = analyses.filter((item) => !latestKeys.has(storyKey(item)));
   const topics = await api<Topic[]>("/topics", demoTopics);
   const sportsTopics = topics.filter(
     (topic) =>
       topic.category === "sport" ||
       /bong|tennis|cau-long|the-thao|the-hinh|motor|esport|khac/.test(topic.slug),
   );
+  const today = new Date().toISOString().slice(0, 10);
+  const events = await api<SportsEvent[]>(`/events?date=${today}&limit=6`, [], 20);
   const lead = latest[0];
   const secondary = latest.slice(1, 5);
-  const scored = Array.from(
-    new Map(
-      latest
-        .map((item) => ({ item, fixture: fixtureFrom(item) }))
-        .filter((entry): entry is { item: Item; fixture: Fixture } => Boolean(entry.fixture))
-        .map((entry) => [entry.fixture.key, entry]),
-    ).values(),
-  ).slice(0, 6);
   const dateLabel = new Intl.DateTimeFormat("vi-VN", {
     weekday: "long",
     day: "2-digit",
@@ -111,11 +130,10 @@ export default async function Home() {
             <b>
               <i /> Tin mới cập nhật liên tục
             </b>
-            <span>Ấn bản số {new Date().getDate().toString().padStart(2, "0")}</span>
           </div>
           <div className="masthead-grid">
             <div className="masthead-copy">
-              <span className="tag">BÁO THỂ THAO ĐA NGUỒN</span>
+              <span className="tag">Báo thể thao đa nguồn</span>
               <h1>
                 Bản tin thể thao <em>24h</em>
               </h1>
@@ -124,15 +142,27 @@ export default async function Home() {
                 nguồn uy tín.
               </p>
             </div>
-          </div>
-          <nav className="category-strip">
-            <Link href="/danh-muc">Mới nhất</Link>
-            {sportsTopics.slice(0, 10).map((topic) => (
-              <Link href={`/chu-de/${topic.slug}`} key={topic.id}>
-                {topic.name}
+            <div className="masthead-actions" aria-label="Tác vụ nhanh">
+              <Link className="masthead-primary-action" href="#nghe-bao">
+                <span>Nghe bản tin</span>
+                <small>Audio 6h và 20h</small>
               </Link>
-            ))}
-          </nav>
+              <Link className="masthead-secondary-action" href="/bat-kip">
+                Bắt kịp 3 phút
+              </Link>
+              <details className="topic-dropdown">
+                <summary>Chọn chuyên mục</summary>
+                <div>
+                  <Link href="/danh-muc">Mới nhất</Link>
+                  {sportsTopics.slice(0, 10).map((topic) => (
+                    <Link href={`/chu-de/${topic.slug}`} key={topic.id}>
+                      {topic.name}
+                    </Link>
+                  ))}
+                </div>
+              </details>
+            </div>
+          </div>
         </section>
 
         {isPersonalized ? (
@@ -200,7 +230,7 @@ export default async function Home() {
               ))}
             </div>
           </section>
-          <aside className="sports-rail">
+          <aside className="sports-rail" id="nghe-bao">
             <DailyBriefPlayer />
             <div className="rail-separator">
               <span>KHÁM PHÁ THEO MÔN</span>
@@ -253,41 +283,52 @@ export default async function Home() {
           </section>
         ) : null}
 
-        {scored.length ? (
+        {events.length ? (
           <section className="sports-results">
             <div className="section-heading">
               <div>
-                <span className="tag">03 · KẾT QUẢ</span>
-                <h2>Tỷ số đáng chú ý</h2>
+                <span className="tag">03 · EVENT HUB</span>
+                <h2>Lịch & kết quả có nguồn</h2>
               </div>
+              <Link href="/lich-the-thao">Xem lịch đầy đủ →</Link>
             </div>
             <div className="score-grid">
-              {scored.map(({ item, fixture }) => (
-                <Link className="score-tile" href={`/noi-dung/${item.id}`} key={fixture.key}>
+              {events.map((event) => (
+                <Link className="score-tile" href={`/tran-dau/${event.id}`} key={event.id}>
                   <div className="score-head">
-                    <span>Kết thúc</span>
-                    <small>{item.source_name || "BaoTheX"}</small>
+                    <span>
+                      {event.status === "live"
+                        ? "Đang diễn ra"
+                        : event.status === "finished"
+                          ? "Kết thúc"
+                          : "Lịch dự kiến"}
+                    </span>
+                    <small>{event.is_manual ? "BaoTheX cập nhật" : event.data_source}</small>
                   </div>
                   <div className="score-team">
-                    <TeamMark team={fixture.home} />
-                    <b>{fixture.home.name}</b>
-                    <strong>{fixture.homeScore}</strong>
+                    <span className="team-mark">
+                      {(event.home_name || event.title).slice(0, 2).toUpperCase()}
+                    </span>
+                    <b>{event.home_name || event.title}</b>
+                    <strong>{event.home_score ?? ""}</strong>
                   </div>
-                  <div className="score-team">
-                    <TeamMark team={fixture.away} />
-                    <b>{fixture.away.name}</b>
-                    <strong>{fixture.awayScore}</strong>
-                  </div>
+                  {event.away_name ? (
+                    <div className="score-team">
+                      <span className="team-mark">{event.away_name.slice(0, 2).toUpperCase()}</span>
+                      <b>{event.away_name}</b>
+                      <strong>{event.away_score ?? ""}</strong>
+                    </div>
+                  ) : null}
                   <div className="score-foot">
-                    <span>{shortDate(item.published_at)}</span>
-                    <b>Xem diễn biến →</b>
+                    <span>{shortDate(event.starts_at)}</span>
+                    <b>{event.freshness === "delayed" ? "Cập nhật chậm · " : ""}Chi tiết →</b>
                   </div>
                 </Link>
               ))}
             </div>
           </section>
         ) : null}
-        {analyses.length ? (
+        {truthAnalyses.length ? (
           <section className="sports-section analysis-home-section">
             <div className="section-heading">
               <div>
@@ -297,26 +338,34 @@ export default async function Home() {
               <Link href="/goc-nhin">Xem toàn bộ phân tích →</Link>
             </div>
             <div className="analysis-home-grid">
-              {analyses.map((item) => (
+              {truthAnalyses.map((item) => (
                 <MosaicCard item={item} key={item.id} />
               ))}
             </div>
           </section>
         ) : null}
-        <section className="sports-section">
-          <div className="section-heading">
-            <div>
-              <span className="tag">04 · TOÀN CẢNH</span>
-              <h2>Nhiều góc nhìn thể thao</h2>
+        {/* Guarded like every other block on this page. A fixed slice into a
+            variable-length list is a promise the data cannot always keep, and
+            when it came up empty this section still rendered its heading, its
+            "Khám phá chuyên mục" link and an empty grid — 188px of furniture
+            announcing news that was not there. A section with nothing in it
+            should not be on the page at all. */}
+        {latest.length > 18 ? (
+          <section className="sports-section">
+            <div className="section-heading">
+              <div>
+                <span className="tag">04 · TOÀN CẢNH</span>
+                <h2>Nhiều góc nhìn thể thao</h2>
+              </div>
+              <Link href="/danh-muc">Khám phá chuyên mục →</Link>
             </div>
-            <Link href="/danh-muc">Khám phá chuyên mục →</Link>
-          </div>
-          <div className="news-mosaic">
-            {latest.slice(8, 26).map((item) => (
-              <MosaicCard item={item} key={item.id} />
-            ))}
-          </div>
-        </section>
+            <div className="news-mosaic">
+              {latest.slice(18, 30).map((item) => (
+                <MosaicCard item={item} key={item.id} />
+              ))}
+            </div>
+          </section>
+        ) : null}
         <section className="sports-section">
           <div className="section-heading">
             <div>
@@ -341,6 +390,14 @@ export default async function Home() {
 
 function uniqueItems(items: Item[]) {
   return Array.from(new Map(items.map((item) => [item.id, item])).values());
+}
+
+function uniqueStories(items: Item[]) {
+  return Array.from(new Map(items.map((item) => [storyKey(item), item])).values());
+}
+
+function storyKey(item: Item) {
+  return item.story_cluster_id ? `cluster:${item.story_cluster_id}` : `content:${item.id}`;
 }
 
 function diversifyVideos(items: Item[], limit: number, maxPerSource = 2) {
