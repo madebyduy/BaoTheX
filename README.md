@@ -224,6 +224,10 @@ For the current Supabase-based production setup, follow
 [`deploy/PRODUCTION.md`](deploy/PRODUCTION.md) and use
 `deploy/docker-compose.prod.yml`.
 
+For the CI/CD architecture, Cloudflare deployment, Windows pull-based updater,
+rollback procedure, and interview talking points, see
+[`deploy/DELIVERY_PIPELINE.md`](deploy/DELIVERY_PIPELINE.md).
+
 The API already emits CORS headers for `CORS_ORIGINS`, so the web app can call
 it directly during development.
 

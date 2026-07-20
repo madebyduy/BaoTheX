@@ -15,7 +15,8 @@ Get-Content (Join-Path $root ".env") | ForEach-Object {
 }
 
 $env:API_ADDR = ":8081"
-$env:NEXT_PUBLIC_API_URL = "http://localhost:8081"
+$ngrokURL = "https://miranda-gasmetophytic-unboyishly.ngrok-free.dev"
+$env:NEXT_PUBLIC_API_URL = $ngrokURL
 $env:GO111MODULE = "on"
 
 function Start-DevWindow([string]$title, [string]$workdir, [string]$command) {
@@ -31,8 +32,34 @@ function Start-DevWindow([string]$title, [string]$workdir, [string]$command) {
 
 Start-DevWindow "BaoTheX API" $root "go run .\apps\api"
 Start-DevWindow "BaoTheX Worker" $root "go run .\apps\worker"
+
+# Ngrok free accounts have one assigned dev domain. Reusing the account's
+# endpoint keeps the public API URL stable across agent and project restarts.
+$activeNgrok = $null
+try {
+  $activeNgrok = (Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 2).tunnels |
+    Where-Object { $_.public_url -eq $ngrokURL -and $_.config.addr -match ':8081/?$' } |
+    Select-Object -First 1
+} catch {
+  # No local ngrok agent is running yet.
+}
+
+if (-not $activeNgrok) {
+  $ngrokCommand = Get-Command ngrok -ErrorAction SilentlyContinue
+  $ngrokExe = if ($ngrokCommand) {
+    $ngrokCommand.Source
+  } else {
+    Join-Path $env:USERPROFILE "Downloads\ngrok-v3-stable-windows-amd64\ngrok.exe"
+  }
+  if (-not (Test-Path $ngrokExe)) {
+    throw "Khong tim thay ngrok.exe. Cai ngrok hoac them ngrok vao PATH."
+  }
+  Start-DevWindow "BaoTheX Tunnel" $root "& '$ngrokExe' http 8081"
+}
+
 Start-DevWindow "BaoTheX Frontend" (Join-Path $root "apps\web") "npm run dev"
 
 Write-Host "Đã khởi động frontend, API và worker." -ForegroundColor Green
 Write-Host "Frontend: http://localhost:3000"
 Write-Host "API:      http://localhost:8081"
+Write-Host "Tunnel:   $ngrokURL"

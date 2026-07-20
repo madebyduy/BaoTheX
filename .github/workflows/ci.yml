@@ -4,57 +4,85 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
   schedule:
     - cron: "17 2 * * 1"
 
-# Cancel superseded runs on the same ref to save minutes.
+permissions:
+  contents: read
+
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   backend:
-    name: Go (vet · test · build)
+    name: Backend quality gate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: go vet
-        run: go vet ./...
-      - name: go test
-        run: go test ./...
-      - name: go build
-        run: go build ./...
 
-  web:
-    name: Web (lint · types · build)
+      - name: Verify formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          if [[ -n "$unformatted" ]]; then
+            echo "The following Go files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Build binaries
+        run: |
+          go build -o /tmp/baothex-api ./apps/api
+          go build -o /tmp/baothex-worker ./apps/worker
+
+  frontend:
+    name: Frontend quality gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/web
     env:
-      # No API in CI — production rendering must stay honest and use empty states.
-      NEXT_PUBLIC_API_URL: http://127.0.0.1:9
-      NEXT_PUBLIC_SITE_URL: https://baothex.vn
+      NEXT_PUBLIC_API_URL: https://api.example.test
+      NEXT_PUBLIC_SITE_URL: https://example.test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-      - run: npm ci
+
+      - name: Install locked dependencies
+        run: npm ci
+
       - name: Lint
-        run: npm run lint
-      - name: Typecheck
-        run: npx tsc --noEmit
-      - name: Build
+        run: npm run lint:ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Build Next.js
         run: npm run build
-      - name: Production dependency audit
-        run: npm audit --omit=dev
 
   security:
     name: Go vulnerability scan
@@ -81,7 +109,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci

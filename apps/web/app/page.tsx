@@ -378,8 +378,8 @@ export default async function Home() {
               <Link href="/goc-nhin">Xem toàn bộ phân tích →</Link>
             </div>
             <div className="analysis-home-grid">
-              {truthAnalyses.map((item) => (
-                <MosaicCard item={item} key={item.id} />
+              {truthAnalyses.map((item, index) => (
+                <AnalysisHomeCard item={item} index={index} key={item.id} />
               ))}
             </div>
           </section>
@@ -581,6 +581,28 @@ function MosaicCard({ item }: { item: Item }) {
         <StorySignals item={item} />
         <h3>{item.title}</h3>
         <p>{item.summary || item.excerpt || "Xem nội dung đầy đủ."}</p>
+      </div>
+    </Link>
+  );
+}
+function AnalysisHomeCard({ item, index }: { item: Item; index: number }) {
+  return (
+    <Link className="analysis-home-card" href={`/noi-dung/${item.id}`}>
+      <div className="analysis-home-topline">
+        <span>Phân tích đa nguồn</span>
+        <time>{shortDate(item.published_at)}</time>
+      </div>
+      <div className="analysis-home-copy">
+        <span className="analysis-home-index">{String(index + 1).padStart(2, "0")}</span>
+        <StorySignals item={item} />
+        <h3>{item.title}</h3>
+        <p>{item.summary || item.excerpt || "Đọc góc nhìn tổng hợp từ nhiều nguồn tin."}</p>
+      </div>
+      <div className="analysis-home-footer">
+        <span>{item.source_name || "Ban biên tập BaoTheX"}</span>
+        <b>
+          Đọc phân tích <i aria-hidden="true">→</i>
+        </b>
       </div>
     </Link>
   );

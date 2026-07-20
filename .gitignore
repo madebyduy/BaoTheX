@@ -38,3 +38,6 @@ apps/web/out/
 
 # Postgres data (if bind-mounted locally)
 deploy/pgdata/
+
+# Runtime logs
+logs/
