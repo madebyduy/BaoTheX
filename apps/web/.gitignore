@@ -17,8 +17,10 @@ dist-ssr
 *.local
 
 # Wrangler / Cloudflare
+.open-next/
 .wrangler/
 .dev.vars
+.npm-cache/
 
 # Editor directories and files
 .vscode/*

@@ -1,8 +1,14 @@
 import type { NextConfig } from "next";
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  // Keep lint as an explicit CI step. OpenNext invokes Next through Bun on
+  // Windows, where CRLF files are incorrectly reported by eslint-plugin-prettier.
+  eslint: { ignoreDuringBuilds: true },
 };
 
 export default nextConfig;
+
+initOpenNextCloudflareForDev();
