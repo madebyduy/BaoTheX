@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -116,17 +118,47 @@ func (s *Server) handleSePayIPN(w http.ResponseWriter, r *http.Request) {
 	if amountText == "" {
 		amountText = payload.Order.Amount
 	}
-	amountFloat, err := strconv.ParseFloat(amountText, 64)
-	if err != nil || amountFloat <= 0 {
+	amount, err := parseVND(amountText)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_amount", "invalid payment amount")
 		return
 	}
-	_, newlyPaid, err := s.db.Engagement.MarkPaymentPaid(r.Context(), payload.Order.InvoiceNumber, payload.Transaction.ID, payload.Order.ID, int64(amountFloat))
+	_, newlyPaid, err := s.db.Engagement.MarkPaymentPaid(r.Context(), payload.Order.InvoiceNumber, payload.Transaction.ID, payload.Order.ID, amount)
 	if err != nil {
 		writeDomainError(w, s.log, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"acknowledged": true, "activated": newlyPaid}, nil)
+}
+
+// parseVND parses the provider's integer currency amount without float
+// rounding/truncation. Providers sometimes serialise VND as "39000.00"; only a
+// zero fractional part is valid because the currency has no minor unit here.
+func parseVND(raw string) (int64, error) {
+	whole, fraction, hasFraction := strings.Cut(strings.TrimSpace(raw), ".")
+	if whole == "" {
+		return 0, fmt.Errorf("empty amount")
+	}
+	for _, r := range whole {
+		if r < '0' || r > '9' {
+			return 0, fmt.Errorf("non-decimal amount")
+		}
+	}
+	if hasFraction {
+		if fraction == "" {
+			return 0, fmt.Errorf("empty fraction")
+		}
+		for _, r := range fraction {
+			if r != '0' {
+				return 0, fmt.Errorf("fractional VND")
+			}
+		}
+	}
+	amount, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil || amount <= 0 {
+		return 0, fmt.Errorf("invalid amount")
+	}
+	return amount, nil
 }
 
 func (s *Server) handleLatestAudioBrief(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +172,36 @@ func (s *Server) handleLatestAudioBrief(w http.ResponseWriter, r *http.Request) 
 		writeDomainError(w, s.log, err)
 		return
 	}
+	if s.isMissingLocalAudio(brief.AudioURL) {
+		// A database row can outlive a local media volume after a cleanup or a
+		// machine restart. Requeue it here so readers never get a convincing
+		// looking player attached to a 404 audio file.
+		if err := s.enqueue.EnqueueGenerateAudio(r.Context(), brief.BriefDate, brief.Edition); err != nil {
+			s.log.Warn("requeue missing audio brief failed", "brief", brief.ID, "err", err)
+		}
+		writeError(w, http.StatusServiceUnavailable, "audio_processing", "Audio brief is being regenerated")
+		return
+	}
 	writeJSON(w, http.StatusOK, brief, nil)
+}
+
+// isMissingLocalAudio only verifies files owned by this deployment. External
+// URLs are intentionally left alone; the audio renderer itself writes /media/.
+func (s *Server) isMissingLocalAudio(audioURL *string) bool {
+	if audioURL == nil || strings.TrimSpace(*audioURL) == "" {
+		return true
+	}
+	u, err := url.Parse(*audioURL)
+	if err != nil || !strings.HasPrefix(u.Path, "/media/") {
+		return false
+	}
+	rel := strings.TrimPrefix(u.Path, "/media/")
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	if clean == "." || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+		return true
+	}
+	info, err := os.Stat(filepath.Join(s.cfg.MediaStorageDir, clean))
+	return err != nil || info.IsDir() || info.Size() == 0
 }
 
 func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {

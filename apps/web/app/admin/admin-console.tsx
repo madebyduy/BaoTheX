@@ -419,6 +419,21 @@ function ContentRows({
               Xuất bản
             </button>
             <button
+              disabled={busy === `analysis-${item.id}` || item.type !== "article"}
+              title={
+                item.type === "article"
+                  ? "Tạo bản nháp Góc nhìn từ cụm sự kiện có nguồn đối chiếu"
+                  : "Chỉ bài viết mới có thể đưa vào hàng Góc nhìn"
+              }
+              onClick={() =>
+                void act(`analysis-${item.id}`, `/admin/content/${item.id}/analysis-queue`, {
+                  method: "POST",
+                })
+              }
+            >
+              {busy === `analysis-${item.id}` ? "Đang xếp hàng..." : "Đưa vào hàng Góc nhìn"}
+            </button>
+            <button
               disabled={busy === `feature-${item.id}`}
               onClick={() =>
                 void act(`feature-${item.id}`, `/admin/content/${item.id}/highlight`, {

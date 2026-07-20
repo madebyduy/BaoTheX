@@ -5,6 +5,38 @@ import { usePathname, useRouter } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 
+// ReadingProgress renders a thin bar pinned to the top of the viewport that
+// fills as the reader scrolls the article — a small cue that reads as a real
+// newsroom. Passive scroll listener + rAF so it never blocks the main thread.
+export function ReadingProgress() {
+  const [progress, setProgress] = useState(0);
+  useEffect(() => {
+    let frame = 0;
+    function update() {
+      frame = 0;
+      const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+      const pct = scrollable > 0 ? (window.scrollY / scrollable) * 100 : 0;
+      setProgress(Math.min(100, Math.max(0, pct)));
+    }
+    function onScroll() {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    }
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+  return (
+    <div className="reading-progress" aria-hidden>
+      <span style={{ width: `${progress}%` }} />
+    </div>
+  );
+}
+
 export function BackButton() {
   const router = useRouter();
   function goBack() {

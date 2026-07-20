@@ -1,9 +1,16 @@
 import Link from "next/link";
-import { api, type Sport, type SportsEvent } from "../lib";
+import { api, pageMetadata, type Sport, type SportsEvent } from "../lib";
 import { Footer, PageTitle } from "../ui";
 import { SportsEventCard } from "../sports-event-card";
 
 type Search = Promise<{ sport?: string; date?: string; status?: string }>;
+
+export const metadata = pageMetadata({
+  title: "Lịch thi đấu & kết quả",
+  description:
+    "Lịch thi đấu, tỷ số trực tiếp và kết quả các giải thể thao lớn, cập nhật liên tục có nguồn.",
+  path: "/lich-the-thao",
+});
 
 export default async function SportsCalendarPage({ searchParams }: { searchParams: Search }) {
   const params = await searchParams;

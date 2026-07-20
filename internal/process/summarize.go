@@ -487,7 +487,9 @@ func analysisDraftPrompt(title string, materials []domain.AnalysisMaterial, clai
 Mở bài bằng một chi tiết đáng nhớ hoặc một câu dẫn hài hước có duyên, đi thẳng vào chuyện.
 Kể rõ diễn biến và bối cảnh: ai, làm gì, ở đâu, khi nào, điều gì mới; giải thích vì sao người hâm mộ nên quan tâm.
 Có một phần so sánh các nguồn: nguồn nào đồng thuận, nguồn nào nói khác, khác ở đâu và sự khác biệt làm thay đổi cách hiểu thế nào.
-Đưa góc nhìn BaoTheX tự nhiên, hài hước, dí dỏm, duyên dáng và dễ tiếp cận. Có thể châm biếm nhẹ một nghịch lý thể thao, nhưng không xúc phạm, không bịa phát ngôn và không biến bài thành tấu hài.
+	Đưa ít nhất 3 và nhiều nhất 5 nhận định độc quyền của BaoTheX xen kẽ trong bài; mỗi nhận định là một đoạn ngắn, mở bằng “Góc nhìn BaoTheX:” và làm rõ ý nghĩa, hệ quả hoặc nghịch lý của dữ kiện vừa nêu. Nhận định không được là bản tóm tắt lại tin, không được tự tạo số liệu, động cơ, phát ngôn hoặc kết quả chưa có trong hồ sơ.
+	Giọng BaoTheX thoải mái, sáng rõ, có nét hóm hỉnh của người xem thể thao kỹ tính nhưng không lên lớp. Ưu tiên hình ảnh ví von cụ thể, gọn và đúng bối cảnh trận đấu; có thể châm biếm nhẹ một nghịch lý thể thao, nhưng câu đùa chỉ để soi rõ dữ kiện, không chế nhạo cá nhân, không xúc phạm, không bịa phát ngôn và không biến bài thành tấu hài. Tránh tiếng lóng gượng ép, câu cửa miệng và lối “giật tít”.
+	Mỗi nhận định BaoTheX phải đi theo công thức: dữ kiện đã dẫn nguồn → lý giải hợp lý → kết luận có mức độ. Khi phản biện một nhận định phổ biến, phải nêu rõ lập luận đối lập dựa trên nguồn nào, dữ kiện nào ủng hộ hoặc làm yếu nó, rồi mới đưa kết luận có mức độ. Không phản biện bằng cảm tính, mỉa mai hoặc kết luận tuyệt đối.
 Kết bằng điều còn bỏ ngỏ hoặc diễn biến tiếp theo. Chỉ đặt tối đa một câu hỏi sắc nếu hồ sơ thật sự có tranh cãi; tin kết quả hoặc lịch thi đấu bình thường thì không đặt câu hỏi.
 
 QUY TẮC NGUỒN:

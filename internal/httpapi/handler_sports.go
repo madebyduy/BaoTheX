@@ -43,12 +43,33 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	items, err := s.db.Sports.ListEvents(r.Context(), q.Get("sport"), status, date, atoiDefault(q.Get("limit"), 50))
+	items, err := s.db.Sports.ListEvents(r.Context(), q.Get("sport"), q.Get("competition"), status, date, atoiDefault(q.Get("limit"), 50))
 	if err != nil {
 		writeDomainError(w, s.log, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, items, nil)
+}
+
+// handleCompetition powers the league hub: the competition plus its upcoming
+// fixtures and most recent results. Standings are intentionally absent — the
+// schema carries no table data — so the page shows fixtures and results only.
+func (s *Server) handleCompetition(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	comp, err := s.db.Sports.GetCompetitionBySlug(r.Context(), slug)
+	if err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	upcoming, _ := s.db.Sports.ListEvents(r.Context(), "", slug, "scheduled", "", 20)
+	live, _ := s.db.Sports.ListEvents(r.Context(), "", slug, "live", "", 20)
+	results, _ := s.db.Sports.ListEvents(r.Context(), "", slug, "finished", "", 20)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"competition": comp,
+		"live":        live,
+		"upcoming":    upcoming,
+		"results":     results,
+	}, nil)
 }
 
 func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +125,7 @@ func (s *Server) handleEventCalendar(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCatchUp(w http.ResponseWriter, r *http.Request) {
 	duration := atoiDefault(r.URL.Query().Get("duration"), 3)
-	limits := map[int]int{1: 3, 3: 7, 10: 15}
+	limits := map[int]int{1: 3, 3: 5, 10: 15}
 	limit, ok := limits[duration]
 	if !ok {
 		writeError(w, 400, "validation", "duration phải là 1, 3 hoặc 10")
@@ -161,24 +182,29 @@ func (s *Server) handlePreferenceSync(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	if len(req.TopicIDs) > 100 || len(req.EntityIDs) > 100 || len(req.Goals) > 20 {
+		writeError(w, 400, "validation", "Quá nhiều tuỳ chọn trong một lần đồng bộ")
+		return
+	}
+	for _, goal := range req.Goals {
+		if strings.TrimSpace(goal) == "" || len([]rune(goal)) > 80 {
+			writeError(w, 400, "validation", "Mục tiêu không hợp lệ")
+			return
+		}
+	}
+	if !positiveIDs(req.TopicIDs) || !positiveIDs(req.EntityIDs) {
+		writeError(w, 400, "validation", "Danh mục theo dõi không hợp lệ")
+		return
+	}
 	if len(req.Layout) > 0 {
 		if !validDashboard(req.Layout) {
 			writeError(w, 400, "validation", "Bố cục dashboard không hợp lệ")
 			return
 		}
-		if err := s.db.Sports.SaveDashboard(r.Context(), u.ID, req.Layout); err != nil {
-			writeDomainError(w, s.log, err)
-			return
-		}
 	}
-	if len(req.Goals) > 0 {
-		_ = s.db.User.SetOnboarding(r.Context(), u.ID, req.Goals)
-	}
-	for _, id := range req.TopicIDs {
-		_ = s.db.Follow.FollowTopic(r.Context(), u.ID, id)
-	}
-	for _, id := range req.EntityIDs {
-		_ = s.db.Follow.FollowEntity(r.Context(), u.ID, id)
+	if err := s.db.Sports.SyncPreferences(r.Context(), u.ID, req.Layout, req.Goals, req.TopicIDs, req.EntityIDs); err != nil {
+		writeDomainError(w, s.log, err)
+		return
 	}
 	writeJSON(w, 200, map[string]bool{"synced": true}, nil)
 }
@@ -271,12 +297,26 @@ func (s *Server) handleFanPassport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleProductEvent(w http.ResponseWriter, r *http.Request) {
+	if !s.writeLimiter.allow(clientIP(r, s.trustedProxy) + "|product-event") {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many events")
+		return
+	}
 	var req struct {
 		ClientID   string          `json:"client_id"`
 		EventName  string          `json:"event_name"`
 		Properties json.RawMessage `json:"properties"`
 	}
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.ClientID = strings.TrimSpace(req.ClientID)
+	req.EventName = strings.TrimSpace(req.EventName)
+	if req.ClientID != "" && !validAnonymousClientID(req.ClientID) {
+		writeError(w, http.StatusBadRequest, "validation", "client_id không hợp lệ")
+		return
+	}
+	if len(req.Properties) > 16<<10 {
+		writeError(w, http.StatusBadRequest, "validation", "properties quá lớn")
 		return
 	}
 	var uid int64

@@ -1,12 +1,27 @@
 import Link from "next/link";
-import { api, type Entity } from "../lib";
+import { api, pageMetadata, type Entity } from "../lib";
 import { Footer, PageTitle } from "../ui";
 
-const fallbackPeople: Entity[] = [
-  { id: 1, slug: "jeff-nippard", name: "Jeff Nippard", kind: "Nhà sáng tạo nội dung" },
-  { id: 2, slug: "greg-nuckols", name: "Greg Nuckols", kind: "Nhà nghiên cứu & huấn luyện viên" },
-  { id: 3, slug: "layne-norton", name: "Layne Norton", kind: "Nhà nghiên cứu dinh dưỡng" },
-];
+const fallbackPeople: Entity[] =
+  process.env.NODE_ENV === "production"
+    ? []
+    : [
+        { id: 1, slug: "jeff-nippard", name: "Jeff Nippard", kind: "Nhà sáng tạo nội dung" },
+        {
+          id: 2,
+          slug: "greg-nuckols",
+          name: "Greg Nuckols",
+          kind: "Nhà nghiên cứu & huấn luyện viên",
+        },
+        { id: 3, slug: "layne-norton", name: "Layne Norton", kind: "Nhà nghiên cứu dinh dưỡng" },
+      ];
+
+export const metadata = pageMetadata({
+  title: "Nhân vật thể thao",
+  description:
+    "Hồ sơ cầu thủ, vận động viên và huấn luyện viên: tiểu sử, thành tích và tin mới nhất.",
+  path: "/nhan-vat",
+});
 
 export default async function Page() {
   const people = await api<Entity[]>("/entities", fallbackPeople);

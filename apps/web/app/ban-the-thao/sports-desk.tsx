@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { Item, SportsEvent } from "../lib";
+import { articleHref, type Item, type SportsEvent } from "../lib";
 import { SportsEventCard } from "../sports-event-card";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
@@ -152,7 +152,7 @@ function Widget({ id, events, catchUp }: { id: string; events: SportsEvent[]; ca
     return catchUp.length ? (
       <div className="desk-story-list">
         {catchUp.slice(0, 3).map((item) => (
-          <Link href={`/noi-dung/${item.id}`} key={item.id}>
+          <Link href={articleHref(item)} key={item.id}>
             <span>
               {item.verification_status === "confirmed" ? "Đã xác nhận" : "Đang theo dõi"}
             </span>

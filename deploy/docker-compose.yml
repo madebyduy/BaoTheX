@@ -63,7 +63,7 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "8080:8080"
+      - "${API_HOST_PORT:-8080}:8080"
     volumes:
       - media:/var/lib/baothex/media
     restart: unless-stopped
@@ -113,12 +113,16 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+        NEXT_PUBLIC_SITE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
     environment:
       NEXT_PUBLIC_API_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      API_INTERNAL_URL: http://api:8080
     depends_on:
       - api
     expose:
       - "3000"
+    ports:
+      - "${WEB_HOST_PORT:-3000}:3000"
     restart: unless-stopped
 
   caddy:

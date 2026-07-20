@@ -1,5 +1,12 @@
-import { api, demoItems, type Item } from "../lib";
+import { api, demoItems, pageMetadata, type Item } from "../lib";
 import { Footer, ItemGrid, PageTitle } from "../ui";
+export const metadata = pageMetadata({
+  title: "Tìm kiếm",
+  description: "Tìm đội, vận động viên, giải đấu và nội dung thể thao trên BaoTheX.",
+  path: "/tim-kiem",
+  index: false,
+});
+
 export default async function Page({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const { q = "" } = await searchParams;
   const data = await api<{ research?: Item[]; articles?: Item[]; videos?: Item[] }>(

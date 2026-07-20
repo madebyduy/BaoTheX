@@ -2,11 +2,19 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type { Item } from "../lib";
+import { articleHref, type Item } from "../lib";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 
-export function CatchUpPlayer({ items, duration }: { items: Item[]; duration: number }) {
+export function CatchUpPlayer({
+  items,
+  duration,
+  interests,
+}: {
+  items: Item[];
+  duration: number;
+  interests: string[];
+}) {
   const storageKey = `baothex-catchup-${duration}`;
   const [index, setIndex] = useState(0);
   const [known, setKnown] = useState<number[]>([]);
@@ -14,10 +22,15 @@ export function CatchUpPlayer({ items, duration }: { items: Item[]; duration: nu
   const [actionMessage, setActionMessage] = useState("");
   const current = items[index];
   const progress = items.length ? Math.round(((index + 1) / items.length) * 100) : 0;
-  const text = useMemo(
-    () => (current ? `${current.title}. ${current.summary || current.excerpt || ""}` : ""),
-    [current],
-  );
+  const text = useMemo(() => {
+    if (!current) return "";
+    const summary = current.summary || current.excerpt || "";
+    // Foreign items have a Vietnamese digest, but their original headline can
+    // still be English. Read the digest alone so the spoken brief stays Vietnamese.
+    return current.language && current.language !== "vi"
+      ? summary
+      : `${current.title}. ${summary}`.trim();
+  }, [current]);
 
   useEffect(() => {
     const saved = Number(localStorage.getItem(storageKey) || 0);
@@ -73,6 +86,10 @@ export function CatchUpPlayer({ items, duration }: { items: Item[]; duration: nu
     }
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "vi-VN";
+    const vietnameseVoice = window.speechSynthesis
+      .getVoices()
+      .find((voice) => voice.lang.toLowerCase().startsWith("vi"));
+    if (vietnameseVoice) utterance.voice = vietnameseVoice;
     utterance.rate = 1;
     utterance.onend = () => setSpeaking(false);
     setSpeaking(true);
@@ -92,21 +109,36 @@ export function CatchUpPlayer({ items, duration }: { items: Item[]; duration: nu
   if (!current) return null;
   return (
     <section className="catch-up-player">
-      <div className="catch-up-progress">
+      <div className="catch-up-deck">
+        <div className="catch-up-context">
+          <span>ĐANG ĐỌC</span>
+          <strong>
+            {index + 1}/{items.length} câu chuyện
+          </strong>
+        </div>
+        <div className="catch-up-personalization">
+          <span>{interests.length ? "Ưu tiên theo dõi" : "Tuyển chọn trong ngày"}</span>
+          <strong>{interests.length ? interests.join(" · ") : "Tin thể thao quan trọng"}</strong>
+        </div>
+      </div>
+      <div className="catch-up-progress" aria-label={`Tiến độ ${index + 1} trên ${items.length}`}>
         <span style={{ width: `${progress}%` }} />
-        <b>
-          {index + 1}/{items.length}
-        </b>
       </div>
       <div className="catch-up-card">
         <div className="catch-up-kicker">
           <span>
             {current.verification_status === "confirmed" ? "ĐÃ XÁC NHẬN" : "ĐANG THEO DÕI"}
           </span>
-          <small>{current.source_name || "BaoTheX"}</small>
+          <small>Nguồn: {current.source_name || "BaoTheX"}</small>
         </div>
         <h2>{current.title}</h2>
-        <p>{current.summary || current.excerpt || "Nội dung đang được biên tập."}</p>
+        <p>{current.summary || current.excerpt || "Bản tóm lược tiếng Việt đang được biên tập."}</p>
+        <div className="catch-up-origin">
+          <span>BAOTHEX ĐÃ BIÊN TẬP</span>
+          <small>
+            Đọc từ nguồn gốc, tóm lược bằng tiếng Việt và giữ liên kết bài gốc ở trang chi tiết.
+          </small>
+        </div>
         <div className="catch-up-actions">
           <button className="btn light" type="button" onClick={speak}>
             {speaking ? "Dừng nghe" : "Nghe thẻ này"}
@@ -117,7 +149,7 @@ export function CatchUpPlayer({ items, duration }: { items: Item[]; duration: nu
           <button className="btn light" type="button" onClick={followStory}>
             Theo dõi tiếp
           </button>
-          <Link className="btn ember" href={`/noi-dung/${current.id}`}>
+          <Link className="btn ember" href={articleHref(current)}>
             Đọc sâu
           </Link>
           <button className="text-action" type="button" onClick={hide}>
@@ -131,7 +163,9 @@ export function CatchUpPlayer({ items, duration }: { items: Item[]; duration: nu
           ← Trước
         </button>
         <span>
-          {known.length ? `Đã xử lý ${known.length} câu chuyện` : "Tiến độ được lưu trên thiết bị"}
+          {known.length
+            ? `Đã xử lý ${known.length} câu chuyện`
+            : "Tiến độ được lưu trên thiết bị này"}
         </span>
         <button type="button" onClick={() => move(index + 1)} disabled={index === items.length - 1}>
           Tiếp →

@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { apiWithCookie, type ContentBody, type Item, typeLabel } from "../../../lib";
+import { apiWithCookie, articleHref, type ContentBody, type Item, typeLabel } from "../../../lib";
+import { RemoteImage } from "../../../ui";
 
 type AdminDetail = {
   item?: Item;
@@ -54,7 +55,14 @@ export default async function AdminPreviewPage({ params }: { params: Promise<{ i
           ) : null}
 
           {item.image_url ? (
-            <img className="admin-preview-image" src={item.image_url} alt="" />
+            <RemoteImage
+              className="admin-preview-image"
+              src={item.image_url}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              referrerPolicy="no-referrer"
+            />
           ) : null}
 
           {item.key_points?.length ? (
@@ -83,7 +91,7 @@ export default async function AdminPreviewPage({ params }: { params: Promise<{ i
                 Mở nguồn gốc ↗
               </a>
             ) : null}
-            <Link href={`/noi-dung/${item.id}`}>Trang public</Link>
+            <Link href={articleHref(item)}>Trang public</Link>
           </div>
         </article>
       </div>

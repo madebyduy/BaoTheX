@@ -1,5 +1,13 @@
 import Link from "next/link";
 import { Footer } from "../ui";
+import { pageMetadata } from "../lib";
+
+export const metadata = pageMetadata({
+  title: "Đăng nhập",
+  description: "Đăng nhập để cá nhân hoá dòng tin thể thao và nhận bản tin riêng.",
+  path: "/dang-nhap",
+  index: false,
+});
 import { AuthForm } from "../auth-form";
 export default function Page() {
   return (

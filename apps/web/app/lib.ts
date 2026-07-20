@@ -1,3 +1,36 @@
+import type { Metadata } from "next";
+
+// pageMetadata builds a consistent Metadata block (title, description, canonical,
+// Open Graph, Twitter) for a route. metadataBase in the root layout resolves the
+// relative canonical/OG url to an absolute one. Pass index:false for member-only
+// or utility pages that should stay out of the index.
+export function pageMetadata(opts: {
+  title: string;
+  description: string;
+  path: string;
+  index?: boolean;
+}): Metadata {
+  return {
+    title: opts.title,
+    description: opts.description,
+    alternates: { canonical: opts.path },
+    robots: opts.index === false ? { index: false, follow: false } : undefined,
+    openGraph: {
+      type: "website",
+      siteName: "BaoTheX",
+      locale: "vi_VN",
+      title: opts.title,
+      description: opts.description,
+      url: opts.path,
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: opts.title,
+      description: opts.description,
+    },
+  };
+}
+
 export type Item = {
   id: number;
   source_id?: number;
@@ -11,6 +44,7 @@ export type Item = {
   image_url?: string;
   key_points?: string[];
   status?: string;
+  updated_at?: string;
   view_count?: number;
   save_count?: number;
   final_score?: number;
@@ -70,6 +104,16 @@ export type Sport = {
   name: string;
   enabled: boolean;
 };
+export type Competition = {
+  id: number;
+  sport_id?: number;
+  sport_slug?: string;
+  slug: string;
+  name: string;
+  country?: string;
+  data_source?: string;
+  coverage?: string;
+};
 export type SportsEvent = {
   id: number;
   sport_id: number;
@@ -116,7 +160,24 @@ export type FanPassport = {
   points: number;
   badges: string[];
 };
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+// Server-rendered requests use Docker's private service address when present;
+// browser components continue to use the public URL baked into the bundle.
+const API =
+  (typeof window === "undefined" && process.env.API_INTERNAL_URL) ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:8081";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
+function safeFallback<T>(fallback: T): T {
+  // Seed/demo records are useful for local UI work, but publishing them during
+  // an outage is editorially misleading. Array fallbacks therefore become an
+  // honest empty state in production; object fallbacks retain only their shape.
+  return (IS_PRODUCTION && Array.isArray(fallback) ? [] : fallback) as T;
+}
+
+function reportAPIFailure(path: string, detail: string) {
+  console.error(`[BaoTheX API] ${path}: ${detail}`);
+}
 // Public content is cached and revalidated in the background (ISR). Without a
 // default the whole site refetched every request, adding a Tokyo round-trip per
 // call. Pass an explicit revalidate to tune, or 0 to always hit the API.
@@ -126,11 +187,15 @@ export async function api<T>(path: string, fallback: T, revalidate = 60): Promis
       `${API}/api/v1${path}`,
       revalidate > 0 ? { next: { revalidate } } : { cache: "no-store" },
     );
-    if (!r.ok) return fallback;
+    if (!r.ok) {
+      reportAPIFailure(path, `HTTP ${r.status}`);
+      return safeFallback(fallback);
+    }
     const json = await r.json();
     return (json.data ?? json) as T;
-  } catch {
-    return fallback;
+  } catch (error) {
+    reportAPIFailure(path, error instanceof Error ? error.message : "request failed");
+    return safeFallback(fallback);
   }
 }
 
@@ -141,14 +206,18 @@ export async function apiWithCookie<T>(path: string, fallback: T, cookie: string
       cache: "no-store",
       headers: { cookie },
     });
-    if (!response.ok) return fallback;
+    if (!response.ok) {
+      reportAPIFailure(path, `HTTP ${response.status}`);
+      return safeFallback(fallback);
+    }
     const json = await response.json();
     return (json.data ?? json) as T;
-  } catch {
-    return fallback;
+  } catch (error) {
+    reportAPIFailure(path, error instanceof Error ? error.message : "request failed");
+    return safeFallback(fallback);
   }
 }
-export const demoItems: Item[] = [
+const demoItemSeeds: Item[] = [
   {
     id: 1,
     type: "article",
@@ -171,7 +240,8 @@ export const demoItems: Item[] = [
     source_name: "BaoTheX",
   },
 ];
-export const demoTopics: Topic[] = [
+export const demoItems: Item[] = IS_PRODUCTION ? [] : demoItemSeeds;
+const demoTopicSeeds: Topic[] = [
   "Bóng đá Việt Nam",
   "Bóng đá quốc tế",
   "Bóng rổ",
@@ -192,6 +262,43 @@ export const demoTopics: Topic[] = [
   follower_count: 20 + i * 13,
   description: `Tin mới nhất về ${name.toLowerCase()}.`,
 }));
+export const demoTopics: Topic[] = IS_PRODUCTION ? [] : demoTopicSeeds;
+// slugify turns a Vietnamese headline into an ASCII, hyphenated URL slug.
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70)
+    .replace(/-+$/g, "");
+}
+
+// articleHref builds the canonical, SEO-friendly path for a content item:
+// /noi-dung/<slug>-<id>. The numeric id is always appended so it stays
+// parseable from the URL tail no matter how the title slugifies (or if the
+// title later changes). Callers that only have an id still get a working link.
+export function articleHref(item: { id: number | string; title?: string }): string {
+  const slug = item.title ? slugify(item.title) : "";
+  return slug ? `/noi-dung/${slug}-${item.id}` : `/noi-dung/${item.id}`;
+}
+
+// idFromSlug extracts the trailing numeric id from a /noi-dung/<slug>-<id>
+// segment. Legacy id-only URLs (/noi-dung/123) parse unchanged.
+export function idFromSlug(param: string): string {
+  const match = /(\d+)$/.exec(param);
+  return match ? match[1] : param;
+}
+
+// JSON-LD lives in a script element. JSON.stringify alone does not neutralise
+// a source headline containing </script>; escaping '<' prevents that sequence
+// from terminating the element while preserving the exact JSON value.
+export function safeJsonLd(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
 export function typeLabel(type: string) {
   return (
     (

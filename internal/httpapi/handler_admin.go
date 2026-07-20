@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"repwire/internal/domain"
+	"repwire/internal/ingest"
 	"repwire/internal/postgres"
 )
 
@@ -45,15 +46,33 @@ func (s *Server) handleAdminCreateSource(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Name == "" || req.Kind == "" {
+	req.Name = strings.TrimSpace(req.Name)
+	req.Kind = strings.TrimSpace(req.Kind)
+	req.DefaultLang = strings.TrimSpace(strings.ToLower(req.DefaultLang))
+	if req.Name == "" || len([]rune(req.Name)) > 160 || !validSourceKind(req.Kind) {
 		writeError(w, http.StatusBadRequest, "validation", "kind and name are required")
 		return
 	}
+	if req.DefaultLang != "" && !validLanguageTag(req.DefaultLang) {
+		writeError(w, http.StatusBadRequest, "validation", "default_lang is invalid")
+		return
+	}
+	for field, raw := range map[string]string{"homepage_url": req.HomepageURL, "feed_url": req.FeedURL} {
+		if raw != "" {
+			if err := ingest.ValidatePublicHTTPURL(raw); err != nil {
+				writeError(w, http.StatusBadRequest, "validation", field+": "+err.Error())
+				return
+			}
+		}
+	}
 	interval := 30 * time.Minute
 	if req.FetchInterval != "" {
-		if d, err := time.ParseDuration(req.FetchInterval); err == nil {
-			interval = d
+		d, err := time.ParseDuration(req.FetchInterval)
+		if err != nil || d < time.Minute || d > 7*24*time.Hour {
+			writeError(w, http.StatusBadRequest, "validation", "fetch_interval must be between 1m and 168h")
+			return
 		}
+		interval = d
 	}
 	quality := req.Quality
 	if quality < 1 || quality > 5 {
@@ -86,6 +105,28 @@ func (s *Server) handleAdminCreateSource(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusCreated, src, nil)
 }
 
+func validSourceKind(value string) bool {
+	switch domain.SourceKind(value) {
+	case domain.SourceRSS, domain.SourceYouTube, domain.SourceEuropePMC,
+		domain.SourcePodcastRSS, domain.SourceSitemap, domain.SourceManual:
+		return true
+	default:
+		return false
+	}
+}
+
+func validLanguageTag(value string) bool {
+	if len(value) < 2 || len(value) > 15 {
+		return false
+	}
+	for _, r := range value {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
 type updateSourceReq struct {
 	Enabled       *bool   `json:"enabled"`
 	Quality       *int    `json:"quality"`
@@ -104,10 +145,17 @@ func (s *Server) handleAdminUpdateSource(w http.ResponseWriter, r *http.Request)
 	}
 	var intervalSec *int64
 	if req.FetchInterval != nil {
-		if d, err := time.ParseDuration(*req.FetchInterval); err == nil {
-			secs := int64(d.Seconds())
-			intervalSec = &secs
+		d, err := time.ParseDuration(*req.FetchInterval)
+		if err != nil || d < time.Minute || d > 7*24*time.Hour {
+			writeError(w, http.StatusBadRequest, "validation", "fetch_interval must be between 1m and 168h")
+			return
 		}
+		secs := int64(d.Seconds())
+		intervalSec = &secs
+	}
+	if req.Quality != nil && (*req.Quality < 1 || *req.Quality > 5) {
+		writeError(w, http.StatusBadRequest, "validation", "quality must be between 1 and 5")
+		return
 	}
 	if err := s.db.Source.Update(r.Context(), id, req.Enabled, req.Quality, intervalSec); err != nil {
 		writeDomainError(w, s.log, err)

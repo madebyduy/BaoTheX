@@ -2,6 +2,20 @@
 {$DOMAIN} {
 	encode zstd gzip
 
+	# Security headers applied to every response. The CSP is intentionally
+	# permissive on img/media (articles hotlink images from many publishers) and
+	# allows inline scripts/styles, which Next.js App Router hydration and the
+	# JSON-LD blocks require without a nonce pipeline.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; object-src 'none'; img-src 'self' https: data: blob:; media-src 'self' https: blob:; script-src 'self' 'unsafe-inline'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https:; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests"
+		-Server
+	}
+
 	# API is served under /api/* (and the Telegram webhook).
 	handle /api/* {
 		reverse_proxy api:8080
@@ -12,6 +26,11 @@
 	handle /healthz {
 		reverse_proxy api:8080
 	}
+
+	# Next.js build assets are content-hashed and safe to cache forever. Next
+	# already sets immutable headers on these; this reinforces it at the edge.
+	@nextStatic path /_next/static/*
+	header @nextStatic Cache-Control "public, max-age=31536000, immutable"
 
 	handle {
 		reverse_proxy web:3000

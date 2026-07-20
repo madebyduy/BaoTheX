@@ -1,6 +1,24 @@
-import { api, demoItems, type Entity, type Item } from "../../lib";
+import type { Metadata } from "next";
+import { api, demoItems, type Entity, type Item, pageMetadata } from "../../lib";
 import { Footer, ItemGrid, PageTitle } from "../../ui";
 import { FollowButton } from "../../action-buttons";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const data = await api<{ entity?: Entity }>(`/entities/${slug}`, {});
+  const name = data.entity?.name || slug.replaceAll("-", " ");
+  return pageMetadata({
+    title: `${name} — Hồ sơ & tin mới`,
+    description:
+      data.entity?.bio ||
+      `Tiểu sử, thành tích và tin tức mới nhất về ${name} được BaoTheX tổng hợp từ nguồn chính thức.`,
+    path: `/nhan-vat/${slug}`,
+  });
+}
 
 export default async function Page({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;

@@ -17,7 +17,7 @@ func (r *SearchRepo) SearchByType(ctx context.Context, query string, t *domain.C
 		       ts_rank(c.search_tsv, q) * (1 + c.final_score/100) AS rank
 		FROM content_items c
 		JOIN sources s ON s.id=c.source_id,
-		     websearch_to_tsquery('english', unaccent($1)) q
+		     websearch_to_tsquery('simple', unaccent($1)) q
 		WHERE c.status='ready' AND c.search_tsv @@ q
 		  AND ($2::content_type IS NULL OR c.type=$2)
 		ORDER BY rank DESC, c.published_at DESC

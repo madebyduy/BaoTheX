@@ -1,6 +1,29 @@
 import type { Metadata } from "next";
+import { Be_Vietnam_Pro, Manrope, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import { SiteHeader } from "./ui";
+
+// Fonts are self-hosted and preloaded by next/font — no render-blocking round
+// trip to fonts.googleapis.com, and zero layout shift because the fallback
+// metrics are matched. The CSS variables are consumed in globals.css.
+const bodyFont = Be_Vietnam_Pro({
+  subsets: ["latin", "vietnamese"],
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-body",
+  display: "swap",
+});
+const displayFont = Manrope({
+  subsets: ["latin", "vietnamese"],
+  weight: ["500", "600", "700", "800"],
+  variable: "--font-display",
+  display: "swap",
+});
+const monoFont = Roboto_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "700"],
+  variable: "--font-mono",
+  display: "swap",
+});
 import { SiteBackButton } from "./action-buttons";
 import { PersistentAudioProvider } from "./persistent-audio-player";
 import { ProductAnalytics } from "./product-analytics";
@@ -19,7 +42,12 @@ export const metadata: Metadata = {
   applicationName: "BaoTheX",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: "BaoTheX", statusBarStyle: "black-translucent" },
-  alternates: { canonical: "/" },
+  alternates: {
+    canonical: "/",
+    types: {
+      "application/rss+xml": [{ url: "/feed.xml", title: "BaoTheX — Tin thể thao mới nhất" }],
+    },
+  },
   robots: { index: true, follow: true },
   openGraph: {
     type: "website",
@@ -40,7 +68,11 @@ export const viewport = { themeColor: "#ff6b4a", colorScheme: "dark" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="vi">
+    <html
+      lang="vi"
+      suppressHydrationWarning
+      className={`${bodyFont.variable} ${displayFont.variable} ${monoFont.variable}`}
+    >
       <body>
         <PersistentAudioProvider>
           <ProductAnalytics />

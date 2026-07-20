@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { api, type Item } from "./lib";
+import { api, articleHref, type Competition, type Item } from "./lib";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://baothex.vn";
 
@@ -7,7 +7,10 @@ const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://baothex.vn";
 export const revalidate = 3600;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const items = await api<Item[]>("/content?per_page=500", []);
+  const [items, competitions] = await Promise.all([
+    api<Item[]>("/content?per_page=500", []),
+    api<Competition[]>("/competitions", []),
+  ]);
 
   const staticRoutes: MetadataRoute.Sitemap = [
     { path: "", priority: 1, freq: "hourly" as const },
@@ -19,6 +22,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "/ban-the-thao", priority: 0.8, freq: "daily" as const },
     { path: "/du-doan", priority: 0.6, freq: "daily" as const },
     { path: "/premium", priority: 0.5, freq: "monthly" as const },
+    { path: "/gioi-thieu", priority: 0.4, freq: "monthly" as const },
+    { path: "/chinh-sach-bien-tap", priority: 0.4, freq: "monthly" as const },
+    { path: "/nguyen-tac-kiem-chung", priority: 0.4, freq: "monthly" as const },
+    { path: "/lien-he", priority: 0.3, freq: "monthly" as const },
+    { path: "/ban-quyen", priority: 0.3, freq: "monthly" as const },
+    { path: "/dieu-khoan", priority: 0.3, freq: "monthly" as const },
+    { path: "/quyen-rieng-tu", priority: 0.3, freq: "monthly" as const },
   ].map((r) => ({
     url: `${SITE}${r.path}`,
     lastModified: new Date(),
@@ -27,11 +37,18 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }));
 
   const articles: MetadataRoute.Sitemap = items.map((it) => ({
-    url: `${SITE}/noi-dung/${it.id}`,
+    url: `${SITE}${articleHref(it)}`,
     lastModified: it.published_at ? new Date(it.published_at) : new Date(),
     changeFrequency: "weekly",
     priority: 0.8,
   }));
 
-  return [...staticRoutes, ...articles];
+  const leagues: MetadataRoute.Sitemap = competitions.map((c) => ({
+    url: `${SITE}/giai-dau/${c.slug}`,
+    lastModified: new Date(),
+    changeFrequency: "daily",
+    priority: 0.6,
+  }));
+
+  return [...staticRoutes, ...articles, ...leagues];
 }

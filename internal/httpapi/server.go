@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -25,22 +27,34 @@ type Server struct {
 	tgHook     *telegram.Handler
 	pushClient *push.Client
 
-	loginLimiter *rateLimiter
+	loginLimiter    *rateLimiter
+	loginIPLimiter  *rateLimiter
+	registerLimiter *rateLimiter
+	searchLimiter   *rateLimiter
+	writeLimiter    *rateLimiter
+	trustedProxy    func(net.IP) bool
+	metrics         *httpMetrics
 }
 
 // NewServer wires the API server.
 func NewServer(db *postgres.DB, cfg *config.Config, log *slog.Logger, enqueue *jobs.Enqueuer, tgClient *telegram.Client, tgHook *telegram.Handler) *Server {
 	return &Server{
-		db:           db,
-		cfg:          cfg,
-		log:          log,
-		homepage:     feed.NewBuilder(db),
-		ranker:       feed.NewRanker(db),
-		enqueue:      enqueue,
-		tgClient:     tgClient,
-		tgHook:       tgHook,
-		pushClient:   push.NewClient(cfg.WebPushPublicKey, cfg.WebPushPrivateKey, cfg.WebPushSubject),
-		loginLimiter: newRateLimiter(5, 15*time.Minute),
+		db:              db,
+		cfg:             cfg,
+		log:             log,
+		homepage:        feed.NewBuilder(db),
+		ranker:          feed.NewRanker(db),
+		enqueue:         enqueue,
+		tgClient:        tgClient,
+		tgHook:          tgHook,
+		pushClient:      push.NewClient(cfg.WebPushPublicKey, cfg.WebPushPrivateKey, cfg.WebPushSubject),
+		loginLimiter:    newRateLimiter(5, 15*time.Minute),
+		loginIPLimiter:  newRateLimiter(30, 15*time.Minute),
+		registerLimiter: newRateLimiter(5, time.Hour),
+		searchLimiter:   newRateLimiter(60, time.Minute),
+		writeLimiter:    newRateLimiter(120, time.Minute),
+		trustedProxy:    trustedProxyMatcher(cfg.TrustedProxyCIDRs),
+		metrics:         &httpMetrics{},
 	}
 }
 
@@ -52,8 +66,9 @@ func (s *Server) Handler() http.Handler {
 	// Global middleware chain: recover → logging → cors → withUser → mux.
 	var h http.Handler = mux
 	h = s.withUser(h)
+	h = browserWriteGuard(s.cfg.CORSOrigins, h)
 	h = cors(s.cfg.CORSOrigins, h)
-	h = logging(s.log, h)
+	h = logging(s.log, s.metrics, h)
 	h = recoverer(s.log, h)
 	return h
 }
@@ -63,42 +78,50 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// Health
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	// Intentionally not proxied by the production Caddyfile. Monitoring agents
+	// on the private container network may scrape this low-cardinality endpoint.
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 
 	const v1 = "/api/v1"
 
 	// ---- Public content ----
-	mux.HandleFunc("GET "+v1+"/content", s.handleListContent)
-	mux.HandleFunc("GET "+v1+"/content/{id}", s.handleGetContent)
-	mux.HandleFunc("GET "+v1+"/content/{id}/related", s.handleRelated)
+	// Public GET endpoints carry Cache-Control so Caddy, the Next.js fetch cache
+	// and any CDN can absorb read bursts. Durations track how fast each surface
+	// changes: live scores short, taxonomy long. Personalized or mutating routes
+	// (home, feed, likes, translate) are deliberately left uncached.
+	mux.HandleFunc("GET "+v1+"/content", publicCache(30, s.handleListContent))
+	mux.HandleFunc("GET "+v1+"/content/{id}", publicCache(30, s.handleGetContent))
+	mux.HandleFunc("GET "+v1+"/content/{id}/related", publicCache(120, s.handleRelated))
 	mux.HandleFunc("GET "+v1+"/content/{id}/reactions", s.handleReactions)
 	mux.HandleFunc("POST "+v1+"/content/{id}/like", s.handleLike)
 	mux.HandleFunc("DELETE "+v1+"/content/{id}/like", s.handleUnlike)
-	mux.HandleFunc("GET "+v1+"/clusters/{id}", s.handleGetStoryCluster)
-	mux.HandleFunc("GET "+v1+"/analyses", s.handlePublishedAnalyses)
+	mux.HandleFunc("GET "+v1+"/clusters/{id}", publicCache(60, s.handleGetStoryCluster))
+	mux.HandleFunc("GET "+v1+"/analyses", publicCache(120, s.handlePublishedAnalyses))
 	mux.HandleFunc("POST "+v1+"/content/{id}/translate", s.handleTranslate)
 
-	mux.HandleFunc("GET "+v1+"/research", s.handleListResearch)
-	mux.HandleFunc("GET "+v1+"/research/{id}", s.handleGetResearch)
+	mux.HandleFunc("GET "+v1+"/research", publicCache(300, s.handleListResearch))
+	mux.HandleFunc("GET "+v1+"/research/{id}", publicCache(600, s.handleGetResearch))
 
-	mux.HandleFunc("GET "+v1+"/videos", s.handleListVideos)
-	mux.HandleFunc("GET "+v1+"/videos/{id}", s.handleGetVideo)
+	mux.HandleFunc("GET "+v1+"/videos", publicCache(60, s.handleListVideos))
+	mux.HandleFunc("GET "+v1+"/videos/{id}", publicCache(300, s.handleGetVideo))
 
-	mux.HandleFunc("GET "+v1+"/topics", s.handleListTopics)
-	mux.HandleFunc("GET "+v1+"/topics/{slug}", s.handleGetTopic)
-	mux.HandleFunc("GET "+v1+"/sources", s.handleListSources)
-	mux.HandleFunc("GET "+v1+"/entities", s.handleListEntities)
-	mux.HandleFunc("GET "+v1+"/entities/{slug}", s.handleGetEntity)
+	mux.HandleFunc("GET "+v1+"/topics", publicCache(300, s.handleListTopics))
+	mux.HandleFunc("GET "+v1+"/topics/{slug}", publicCache(300, s.handleGetTopic))
+	mux.HandleFunc("GET "+v1+"/sources", publicCache(600, s.handleListSources))
+	mux.HandleFunc("GET "+v1+"/entities", publicCache(600, s.handleListEntities))
+	mux.HandleFunc("GET "+v1+"/entities/{slug}", publicCache(600, s.handleGetEntity))
 
 	mux.HandleFunc("GET "+v1+"/search", s.handleSearch)
 	mux.HandleFunc("GET "+v1+"/search/suggest", s.handleSuggest)
 	mux.HandleFunc("GET "+v1+"/home", s.handleHome)
-	mux.HandleFunc("GET "+v1+"/capabilities", s.handlePublicCapabilities)
-	mux.HandleFunc("GET "+v1+"/audio-briefs/latest", s.handleLatestAudioBrief)
-	mux.HandleFunc("GET "+v1+"/sports", s.handleSports)
-	mux.HandleFunc("GET "+v1+"/competitions", s.handleCompetitions)
-	mux.HandleFunc("GET "+v1+"/events", s.handleEvents)
-	mux.HandleFunc("GET "+v1+"/events/{id}", s.handleEvent)
-	mux.HandleFunc("GET "+v1+"/events/{id}/content", s.handleEventContent)
+	mux.HandleFunc("GET "+v1+"/capabilities", publicCache(600, s.handlePublicCapabilities))
+	mux.HandleFunc("GET "+v1+"/audio-briefs/latest", publicCache(300, s.handleLatestAudioBrief))
+	mux.HandleFunc("GET "+v1+"/sports", publicCache(600, s.handleSports))
+	mux.HandleFunc("GET "+v1+"/competitions", publicCache(600, s.handleCompetitions))
+	mux.HandleFunc("GET "+v1+"/competitions/{slug}", publicCache(60, s.handleCompetition))
+	mux.HandleFunc("GET "+v1+"/events", publicCache(15, s.handleEvents))
+	mux.HandleFunc("GET "+v1+"/events/{id}", publicCache(15, s.handleEvent))
+	mux.HandleFunc("GET "+v1+"/events/{id}/content", publicCache(60, s.handleEventContent))
 	mux.HandleFunc("GET "+v1+"/events/{id}/calendar.ics", s.handleEventCalendar)
 	mux.HandleFunc("GET "+v1+"/catch-up", s.handleCatchUp)
 	mux.HandleFunc("POST "+v1+"/product-events", s.handleProductEvent)
@@ -181,6 +204,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+v1+"/admin/content/{id}", requireAdmin(s.handleAdminGetContent))
 	mux.HandleFunc("PATCH "+v1+"/admin/content/{id}", requireAdmin(s.handleAdminUpdateContent))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/topics", requireAdmin(s.handleAdminSetTopics))
+	mux.HandleFunc("POST "+v1+"/admin/content/{id}/analysis-queue", requireAdmin(s.handleAdminQueueContentAnalysis))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/highlight", requireAdmin(s.handleAdminHighlight))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/hide", requireAdmin(s.handleAdminHideContent))
 	mux.HandleFunc("PATCH "+v1+"/admin/research/{id}", requireAdmin(s.handleAdminUpdateResearch))
@@ -219,4 +243,20 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"}, nil)
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = fmt.Fprintf(w,
+		"# TYPE baothex_http_requests_total counter\n"+
+			"baothex_http_requests_total %d\n"+
+			"# TYPE baothex_http_errors_total counter\n"+
+			"baothex_http_errors_total %d\n"+
+			"# TYPE baothex_http_requests_in_flight gauge\n"+
+			"baothex_http_requests_in_flight %d\n"+
+			"# TYPE baothex_http_duration_milliseconds_total counter\n"+
+			"baothex_http_duration_milliseconds_total %d\n",
+		s.metrics.requests.Load(), s.metrics.errors.Load(), s.metrics.inFlight.Load(),
+		s.metrics.durationMillis.Load())
 }

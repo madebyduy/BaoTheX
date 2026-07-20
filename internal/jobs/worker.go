@@ -127,8 +127,14 @@ func (w *Worker) run(ctx context.Context, job *domain.Job, sem chan struct{}) {
 		w.fail(ctx, job, err)
 		return
 	}
-	if err := w.queue.Done(ctx, job.ID); err != nil {
-		w.log.Error("mark done failed", "id", job.ID, "err", err)
+	stateCtx, stateCancel := jobStateContext(ctx)
+	defer stateCancel()
+	if err := w.queue.Done(stateCtx, job.ID, w.id); err != nil {
+		level := slog.LevelError
+		if errors.Is(err, postgres.ErrJobLeaseLost) {
+			level = slog.LevelWarn
+		}
+		w.log.Log(stateCtx, level, "mark done failed", "id", job.ID, "err", err)
 	}
 	w.log.Info("job done", "id", job.ID, "kind", job.Kind,
 		"attempt", job.Attempts, "duration_ms", time.Since(start).Milliseconds())
@@ -165,7 +171,19 @@ func retryDelay(attempts int, cause error) time.Duration {
 }
 
 func (w *Worker) fail(ctx context.Context, job *domain.Job, cause error) {
-	if err := w.queue.Fail(ctx, job, cause, retryDelay(job.Attempts, cause)); err != nil {
-		w.log.Error("mark fail failed", "id", job.ID, "err", err)
+	stateCtx, cancel := jobStateContext(ctx)
+	defer cancel()
+	if err := w.queue.Fail(stateCtx, job, w.id, cause, retryDelay(job.Attempts, cause)); err != nil {
+		level := slog.LevelError
+		if errors.Is(err, postgres.ErrJobLeaseLost) {
+			level = slog.LevelWarn
+		}
+		w.log.Log(stateCtx, level, "mark fail failed", "id", job.ID, "err", err)
 	}
+}
+
+// State transitions must survive cancellation of the job context during a
+// graceful shutdown; otherwise the row remains running until the next reaper.
+func jobStateContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 }

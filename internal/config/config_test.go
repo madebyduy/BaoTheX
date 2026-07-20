@@ -150,6 +150,15 @@ func TestLoadRejectsBadEditorialStartHour(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidTrustedProxyCIDR(t *testing.T) {
+	setRequired(t)
+	t.Setenv("TRUSTED_PROXY_CIDRS", "127.0.0.1/32,not-a-network")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXY_CIDRS") {
+		t.Fatalf("expected invalid trusted proxy CIDR to fail, got %v", err)
+	}
+}
+
 // Zero would read as "no editorial limit" and mean the opposite: a desk that
 // never commits to anything. It is a typo, not a setting.
 func TestLoadRejectsZeroEditorialPicks(t *testing.T) {

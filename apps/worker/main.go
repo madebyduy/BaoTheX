@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -39,7 +38,7 @@ func main() {
 	}
 	defer db.Close()
 
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	httpClient := ingest.NewSafeHTTPClient(30 * time.Second)
 	enqueue := jobs.NewEnqueuer(db.Job)
 	tgClient := telegram.NewClient(cfg.TelegramBotToken)
 	tgHandler := telegram.NewHandler(db, tgClient, enqueue, cfg.PublicBaseURL)

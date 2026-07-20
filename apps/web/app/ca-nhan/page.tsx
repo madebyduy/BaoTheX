@@ -1,5 +1,13 @@
 import Link from "next/link";
 import { Footer, PageTitle } from "../ui";
+import { pageMetadata } from "../lib";
+
+export const metadata = pageMetadata({
+  title: "Trang cá nhân",
+  description: "Hồ sơ, hoạt động và thành tích của bạn trên BaoTheX.",
+  path: "/ca-nhan",
+  index: false,
+});
 import { AccountOverview } from "../account-panels";
 import { FanPassportPanel } from "../fan-passport";
 export default function Page() {

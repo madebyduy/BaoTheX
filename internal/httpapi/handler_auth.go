@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"net/http"
+	"net/mail"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"repwire/internal/auth"
 	"repwire/internal/domain"
@@ -16,14 +18,30 @@ type registerReq struct {
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if !s.registerLimiter.allow(clientIP(r, s.trustedProxy)) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many registrations, try again later")
+		return
+	}
 	var req registerReq
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
-	if !strings.Contains(req.Email, "@") || len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "validation", "Valid email and password (>= 8 chars) required")
+	if !validEmail(req.Email) || len(req.Password) < 8 || len(req.Password) > 128 {
+		writeError(w, http.StatusBadRequest, "validation", "Valid email and password (8-128 bytes) required")
 		return
+	}
+	if req.DisplayName != nil {
+		name := strings.TrimSpace(*req.DisplayName)
+		if utf8.RuneCountInString(name) > 80 {
+			writeError(w, http.StatusBadRequest, "validation", "Display name must be at most 80 characters")
+			return
+		}
+		if name == "" {
+			req.DisplayName = nil
+		} else {
+			req.DisplayName = &name
+		}
 	}
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
@@ -50,9 +68,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	if !validEmail(req.Email) || len(req.Password) == 0 || len(req.Password) > 128 {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Invalid email or password")
+		return
+	}
 
 	// Rate limit by IP + email (spec section 17).
-	if !s.loginLimiter.allow(clientIP(r) + "|" + req.Email) {
+	ip := clientIP(r, s.trustedProxy)
+	if !s.loginIPLimiter.allow(ip) || !s.loginLimiter.allow(ip+"|"+req.Email) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many login attempts, try again later")
 		return
 	}
@@ -96,17 +119,34 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if err := s.db.User.SetOnboarding(r.Context(), u.ID, req.Goals); err != nil {
+	if len(req.TopicIDs) > 100 || len(req.EntityIDs) > 100 || len(req.Goals) > 20 {
+		writeError(w, http.StatusBadRequest, "validation", "Quá nhiều tuỳ chọn onboarding")
+		return
+	}
+	for _, goal := range req.Goals {
+		if strings.TrimSpace(goal) == "" || len([]rune(goal)) > 80 {
+			writeError(w, http.StatusBadRequest, "validation", "Mục tiêu không hợp lệ")
+			return
+		}
+	}
+	if !positiveIDs(req.TopicIDs) || !positiveIDs(req.EntityIDs) {
+		writeError(w, http.StatusBadRequest, "validation", "Danh mục theo dõi không hợp lệ")
+		return
+	}
+	if err := s.db.Sports.SyncPreferences(r.Context(), u.ID, nil, req.Goals, req.TopicIDs, req.EntityIDs); err != nil {
 		writeDomainError(w, s.log, err)
 		return
 	}
-	for _, id := range req.TopicIDs {
-		_ = s.db.Follow.FollowTopic(r.Context(), u.ID, id)
-	}
-	for _, id := range req.EntityIDs {
-		_ = s.db.Follow.FollowEntity(r.Context(), u.ID, id)
-	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true}, nil)
+}
+
+func positiveIDs(ids []int64) bool {
+	for _, id := range ids {
+		if id <= 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // issueSession creates a session and sets the cookie.
@@ -121,7 +161,11 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, u *domain.
 		writeDomainError(w, s.log, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, s.sessionCookie(token, expires))
+}
+
+func (s *Server) sessionCookie(token string, expires time.Time) *http.Cookie {
+	return &http.Cookie{
 		Name:     sessionCookie,
 		Value:    token,
 		Path:     "/",
@@ -129,7 +173,7 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, u *domain.
 		HttpOnly: true,
 		Secure:   s.secureCookies(),
 		SameSite: http.SameSiteLaxMode,
-	})
+	}
 }
 
 func (s *Server) clearCookie() *http.Cookie {
@@ -147,4 +191,12 @@ func (s *Server) clearCookie() *http.Cookie {
 // secureCookies enables the Secure flag when the public URL is https.
 func (s *Server) secureCookies() bool {
 	return strings.HasPrefix(s.cfg.PublicBaseURL, "https://")
+}
+
+func validEmail(value string) bool {
+	if value == "" || len(value) > 254 {
+		return false
+	}
+	address, err := mail.ParseAddress(value)
+	return err == nil && strings.EqualFold(address.Address, value)
 }

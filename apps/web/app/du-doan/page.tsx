@@ -1,5 +1,13 @@
 import { Footer, PageTitle } from "../ui";
+import { pageMetadata } from "../lib";
 import { PredictionStudio } from "./studio";
+
+export const metadata = pageMetadata({
+  title: "Dự đoán thể thao",
+  description:
+    "Dự đoán kết quả, tham gia câu hỏi và tích điểm cùng cộng đồng người hâm mộ BaoTheX.",
+  path: "/du-doan",
+});
 
 export default function PredictionsPage() {
   return (

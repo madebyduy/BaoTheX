@@ -56,6 +56,18 @@ func (r *SportsRepo) ListCompetitions(ctx context.Context, sport string) ([]doma
 	return out, rows.Err()
 }
 
+// GetCompetitionBySlug returns a single competition for the league hub page.
+func (r *SportsRepo) GetCompetitionBySlug(ctx context.Context, slug string) (*domain.Competition, error) {
+	var v domain.Competition
+	err := r.db.Pool.QueryRow(ctx, `SELECT c.id,c.sport_id,s.slug,c.slug,c.name,c.country,c.data_source,c.external_id,c.coverage
+		FROM sports_competitions c JOIN sports s ON s.id=c.sport_id WHERE c.slug=$1`, slug).
+		Scan(&v.ID, &v.SportID, &v.SportSlug, &v.Slug, &v.Name, &v.Country, &v.DataSource, &v.ExternalID, &v.Coverage)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	return &v, err
+}
+
 func scanSportsEvent(row pgx.Row) (*domain.SportsEvent, error) {
 	var v domain.SportsEvent
 	err := row.Scan(&v.ID, &v.SportID, &v.SportSlug, &v.SportName, &v.CompetitionID, &v.Competition,
@@ -67,7 +79,7 @@ func scanSportsEvent(row pgx.Row) (*domain.SportsEvent, error) {
 	return &v, err
 }
 
-func (r *SportsRepo) ListEvents(ctx context.Context, sport, status, date string, limit int) ([]domain.SportsEvent, error) {
+func (r *SportsRepo) ListEvents(ctx context.Context, sport, competition, status, date string, limit int) ([]domain.SportsEvent, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
@@ -77,6 +89,9 @@ func (r *SportsRepo) ListEvents(ctx context.Context, sport, status, date string,
 	add := func(clause string, v any) { args = append(args, v); query += fmt.Sprintf(clause, len(args)) }
 	if sport != "" {
 		add(` AND s.slug=$%d`, sport)
+	}
+	if competition != "" {
+		add(` AND co.slug=$%d`, competition)
 	}
 	if status != "" {
 		add(` AND e.status=$%d`, status)
@@ -109,9 +124,14 @@ func (r *SportsRepo) GetEvent(ctx context.Context, id int64, userID int64) (*dom
 		return nil, err
 	}
 	if userID > 0 {
-		_ = r.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM user_event_follows WHERE user_id=$1 AND event_id=$2)`, userID, id).Scan(&v.Following)
+		if err := r.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM user_event_follows WHERE user_id=$1 AND event_id=$2)`, userID, id).Scan(&v.Following); err != nil {
+			return nil, err
+		}
 	}
-	v.RelatedContent, _ = r.EventContent(ctx, id, 20)
+	v.RelatedContent, err = r.EventContent(ctx, id, 20)
+	if err != nil {
+		return nil, err
+	}
 	return v, nil
 }
 
@@ -265,6 +285,49 @@ func (r *SportsRepo) SaveDashboard(ctx context.Context, userID int64, layout jso
 	return err
 }
 
+// SyncPreferences applies an offline client's preference bundle atomically.
+// A missing topic/entity or a database error rolls back the dashboard, goals
+// and every follow rather than reporting success for a partially synced state.
+func (r *SportsRepo) SyncPreferences(ctx context.Context, userID int64, layout json.RawMessage, goals []string, topicIDs, entityIDs []int64) error {
+	return r.db.WithTx(ctx, func(tx pgx.Tx) error {
+		if len(layout) > 0 {
+			if _, err := tx.Exec(ctx, `INSERT INTO user_dashboard_layouts(user_id,layout) VALUES($1,$2)
+				ON CONFLICT(user_id) DO UPDATE SET layout=EXCLUDED.layout,updated_at=now()`, userID, layout); err != nil {
+				return err
+			}
+		}
+		// An empty list is meaningful: it clears goals and still completes
+		// onboarding. Skipping this update made an empty selection impossible to
+		// persist and left users stuck in onboarding.
+		if _, err := tx.Exec(ctx, `UPDATE users SET goals=$2,onboarded_at=COALESCE(onboarded_at,now()) WHERE id=$1`, userID, goals); err != nil {
+			return err
+		}
+		for _, topicID := range topicIDs {
+			tag, err := tx.Exec(ctx, `INSERT INTO user_topic_follows(user_id,topic_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, userID, topicID)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() > 0 {
+				if _, err := tx.Exec(ctx, `UPDATE topics SET follower_count=follower_count+1 WHERE id=$1`, topicID); err != nil {
+					return err
+				}
+			}
+		}
+		for _, entityID := range entityIDs {
+			tag, err := tx.Exec(ctx, `INSERT INTO user_entity_follows(user_id,entity_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, userID, entityID)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() > 0 {
+				if _, err := tx.Exec(ctx, `UPDATE entities SET follower_count=follower_count+1 WHERE id=$1`, entityID); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
 func (r *SportsRepo) CatchUp(ctx context.Context, userID int64, limit int) ([]domain.ContentItem, error) {
 	if limit < 3 {
 		limit = 3
@@ -273,14 +336,34 @@ func (r *SportsRepo) CatchUp(ctx context.Context, userID int64, limit int) ([]do
 		limit = 20
 	}
 	rows, err := r.db.Pool.Query(ctx, `WITH ranked AS (
-		SELECT c.id, row_number() OVER(PARTITION BY COALESCE(sci.cluster_id,-c.id) ORDER BY c.final_score DESC,c.published_at DESC) rn
-		FROM content_items c LEFT JOIN story_cluster_items sci ON sci.content_id=c.id
+		SELECT c.id,
+			row_number() OVER(
+				PARTITION BY COALESCE(sci.cluster_id,-c.id)
+				ORDER BY
+					CASE WHEN $1::bigint > 0 AND (
+						EXISTS(SELECT 1 FROM content_topics ct JOIN user_topic_follows utf ON utf.topic_id=ct.topic_id WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_feed AND (NOT utf.highlights_only OR c.final_score >= 40))
+						OR EXISTS(SELECT 1 FROM content_entities ce JOIN user_entity_follows uef ON uef.entity_id=ce.entity_id WHERE ce.content_id=c.id AND uef.user_id=$1 AND uef.in_feed AND (NOT uef.highlights_only OR c.final_score >= 40))
+						OR EXISTS(SELECT 1 FROM user_source_follows usf WHERE usf.user_id=$1 AND usf.source_id=c.source_id)
+						OR EXISTS(SELECT 1 FROM story_cluster_follows scf WHERE scf.user_id=$1 AND scf.cluster_id=sci.cluster_id)
+					) THEN 1 ELSE 0 END DESC,
+					c.final_score DESC,c.published_at DESC
+			) rn,
+			CASE WHEN $1::bigint > 0 AND (
+				EXISTS(SELECT 1 FROM content_topics ct JOIN user_topic_follows utf ON utf.topic_id=ct.topic_id WHERE ct.content_id=c.id AND utf.user_id=$1 AND utf.in_feed AND (NOT utf.highlights_only OR c.final_score >= 40))
+				OR EXISTS(SELECT 1 FROM content_entities ce JOIN user_entity_follows uef ON uef.entity_id=ce.entity_id WHERE ce.content_id=c.id AND uef.user_id=$1 AND uef.in_feed AND (NOT uef.highlights_only OR c.final_score >= 40))
+				OR EXISTS(SELECT 1 FROM user_source_follows usf WHERE usf.user_id=$1 AND usf.source_id=c.source_id)
+				OR EXISTS(SELECT 1 FROM story_cluster_follows scf WHERE scf.user_id=$1 AND scf.cluster_id=sci.cluster_id)
+			) THEN 1 ELSE 0 END AS personal_match
+		FROM content_items c
+		LEFT JOIN story_cluster_items sci ON sci.content_id=c.id
+		LEFT JOIN content_bodies b ON b.content_id=c.id
 		WHERE c.status='ready' AND c.published_at>now()-interval '14 days'
+		AND (c.language='vi' OR (b.translation_status IN ('ready','digested') AND NULLIF(trim(c.translated_title),'') IS NOT NULL AND NULLIF(trim(c.summary),'') IS NOT NULL))
 		AND ($1::bigint=0 OR NOT EXISTS(SELECT 1 FROM hidden_items h WHERE h.user_id=$1 AND h.content_id=c.id))
 		AND ($1::bigint=0 OR NOT EXISTS(SELECT 1 FROM user_source_mutes sm WHERE sm.user_id=$1 AND sm.source_id=c.source_id))
 		AND ($1::bigint=0 OR NOT EXISTS(SELECT 1 FROM content_topics ct JOIN user_topic_mutes m ON m.topic_id=ct.topic_id WHERE ct.content_id=c.id AND m.user_id=$1)))
 		SELECT `+contentCols+`,s.name FROM ranked r JOIN content_items c ON c.id=r.id JOIN sources s ON s.id=c.source_id
-		WHERE r.rn=1 ORDER BY c.final_score DESC,c.published_at DESC LIMIT $2`, userID, limit)
+		WHERE r.rn=1 ORDER BY r.personal_match DESC,c.final_score DESC,c.published_at DESC LIMIT $2`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +453,7 @@ func (r *SportsRepo) SettlePrediction(ctx context.Context, id int64, correct str
 func (r *SportsRepo) Passport(ctx context.Context, userID int64) (*domain.FanPassport, error) {
 	var p domain.FanPassport
 	err := r.db.Pool.QueryRow(ctx, `SELECT
-		(SELECT count(DISTINCT occurred_at::date) FROM product_events WHERE user_id=$1),
+		(SELECT count(DISTINCT (occurred_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) FROM product_events WHERE user_id=$1),
 		(SELECT count(*) FROM reading_history WHERE user_id=$1),
 		(SELECT count(*) FROM user_event_follows WHERE user_id=$1),
 		(SELECT count(*) FROM prediction_answers WHERE user_id=$1),
@@ -380,7 +463,7 @@ func (r *SportsRepo) Passport(ctx context.Context, userID int64) (*domain.FanPas
 		return nil, err
 	}
 	var days []time.Time
-	rows, err := r.db.Pool.Query(ctx, `SELECT DISTINCT occurred_at::date FROM product_events WHERE user_id=$1 ORDER BY 1 DESC`, userID)
+	rows, err := r.db.Pool.Query(ctx, `SELECT DISTINCT (occurred_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date FROM product_events WHERE user_id=$1 ORDER BY 1 DESC`, userID)
 	if err == nil {
 		for rows.Next() {
 			var d time.Time
@@ -410,17 +493,26 @@ func (r *SportsRepo) Passport(ctx context.Context, userID int64) (*domain.FanPas
 }
 
 func dayStreak(days []time.Time) int {
+	return dayStreakAt(days, time.Now())
+}
+
+func dayStreakAt(days []time.Time, now time.Time) int {
 	if len(days) == 0 {
 		return 0
 	}
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	d := days[0].UTC().Truncate(24 * time.Hour)
+	location, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+	if err != nil {
+		location = time.FixedZone("ICT", 7*60*60)
+	}
+	localNow := now.In(location)
+	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC)
+	d := dateOnly(days[0])
 	if today.Sub(d) > 24*time.Hour {
 		return 0
 	}
 	streak := 1
 	for i := 1; i < len(days); i++ {
-		next := days[i].UTC().Truncate(24 * time.Hour)
+		next := dateOnly(days[i])
 		if d.Sub(next) != 24*time.Hour {
 			break
 		}
@@ -428,6 +520,10 @@ func dayStreak(days []time.Time) int {
 		d = next
 	}
 	return streak
+}
+
+func dateOnly(value time.Time) time.Time {
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func (r *SportsRepo) RecordProductEvent(ctx context.Context, userID int64, clientID, name string, props json.RawMessage) error {

@@ -1,8 +1,59 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { api, type Item, type SportsEvent } from "../../lib";
+import { api, pageMetadata, safeJsonLd, type Item, type SportsEvent } from "../../lib";
 import { Footer, ItemGrid } from "../../ui";
-import { EventFollowButton, EventStatus } from "../../sports-event-card";
+import { EventFollowButton, EventStatus, LiveEventRefresh } from "../../sports-event-card";
+
+const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://baothex.vn";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const event = await api<SportsEvent | null>(`/events/${id}`, null, 10);
+  if (!event) return { title: "Không tìm thấy trận đấu" };
+  const vs = event.away_name ? `${event.home_name} vs ${event.away_name}` : event.title;
+  const comp = event.competition || event.sport_name;
+  return pageMetadata({
+    title: `${vs} — ${comp}`,
+    description: `Lịch thi đấu, tỷ số và tin liên quan: ${vs}${comp ? ` (${comp})` : ""} trên BaoTheX.`,
+    path: `/tran-dau/${id}`,
+  });
+}
+
+function eventJsonLd(event: SportsEvent, id: string) {
+  const statusMap: Record<string, string> = {
+    scheduled: "https://schema.org/EventScheduled",
+    live: "https://schema.org/EventScheduled",
+    postponed: "https://schema.org/EventPostponed",
+    cancelled: "https://schema.org/EventCancelled",
+    finished: "https://schema.org/EventScheduled",
+  };
+  const competitors = [event.home_name, event.away_name].filter(Boolean).map((name) => ({
+    "@type": "SportsTeam",
+    name,
+  }));
+  return {
+    "@context": "https://schema.org",
+    "@type": "SportsEvent",
+    name: event.title,
+    startDate: event.starts_at,
+    eventStatus: statusMap[event.status] || "https://schema.org/EventScheduled",
+    sport: event.sport_name,
+    ...(event.competition
+      ? { superEvent: { "@type": "SportsEvent", name: event.competition } }
+      : {}),
+    ...(competitors.length ? { competitor: competitors } : {}),
+    url: `${SITE}/tran-dau/${id}`,
+    location: {
+      "@type": "Place",
+      name: event.competition || event.sport_name || "Sự kiện thể thao",
+    },
+  };
+}
 
 export default async function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -15,10 +66,15 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: safeJsonLd(eventJsonLd(event, id)) }}
+      />
       <main className="wrap event-detail">
         <div className="event-detail-top">
           <span className="tag">{event.competition || event.sport_name}</span>
           <EventStatus event={event} />
+          <LiveEventRefresh status={event.status} />
         </div>
         <h1>{event.title}</h1>
         <div className="event-scoreboard">

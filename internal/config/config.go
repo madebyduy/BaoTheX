@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -18,8 +19,9 @@ type Config struct {
 	PublicBaseURL string
 
 	// API
-	APIAddr     string
-	CORSOrigins []string
+	APIAddr           string
+	CORSOrigins       []string
+	TrustedProxyCIDRs []string
 
 	// Worker
 	WorkerConcurrency int
@@ -140,6 +142,7 @@ func Load() (*Config, error) {
 		PublicBaseURL:         env("PUBLIC_BASE_URL", "http://localhost:3000"),
 		APIAddr:               env("API_ADDR", ":8080"),
 		CORSOrigins:           splitCSV(env("CORS_ORIGINS", "http://localhost:3000")),
+		TrustedProxyCIDRs:     splitCSV(env("TRUSTED_PROXY_CIDRS", "127.0.0.1/32,::1/128")),
 		WorkerConcurrency:     envInt("WORKER_CONCURRENCY", 8),
 		SportsDataMode:        env("SPORTS_DATA_MODE", "free"),
 		FootballDataToken:     env("FOOTBALL_DATA_TOKEN", ""),
@@ -188,6 +191,11 @@ func Load() (*Config, error) {
 	}
 	if c.SessionSecret == "" {
 		return nil, fmt.Errorf("SESSION_SECRET is required")
+	}
+	for _, cidr := range c.TrustedProxyCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return nil, fmt.Errorf("TRUSTED_PROXY_CIDRS contains invalid CIDR %q", cidr)
+		}
 	}
 	if c.EditorialStartHour < 0 || c.EditorialStartHour > 23 {
 		return nil, fmt.Errorf("EDITORIAL_START_HOUR must be between 0 and 23, got %d", c.EditorialStartHour)

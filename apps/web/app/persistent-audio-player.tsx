@@ -159,6 +159,15 @@ export function PersistentAudioProvider({ children }: { children: React.ReactNod
           setCurrentTime(0);
           persist(track, 0);
         }}
+        onError={() => {
+          // The API requeues missing generated files. Do not leave a 0:00
+          // player on screen while that happens, or imply that playback works.
+          setTrack(null);
+          setPlaying(false);
+          setCurrentTime(0);
+          setDuration(0);
+          persist(null, 0);
+        }}
       />
       {track ? (
         <aside className="persistent-audio-player" aria-label="Trình phát audio BaoTheX">

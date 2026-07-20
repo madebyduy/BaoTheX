@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import type { Item } from "./lib";
+import { articleHref, type Item } from "./lib";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 type Collection = { id: number; name: string; created_at: string };
@@ -104,7 +104,7 @@ export function SavedContent() {
       <div className="content-list">
         {items.length ? (
           items.map((item) => (
-            <Link className="card" href={`/noi-dung/${item.id}`} key={item.id}>
+            <Link className="card" href={articleHref(item)} key={item.id}>
               <span className="tag">Đã lưu · {item.type}</span>
               <h3>{item.title}</h3>
               <p>{item.summary || item.excerpt || "Nội dung đã lưu để đọc lại."}</p>

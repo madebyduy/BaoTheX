@@ -1,13 +1,22 @@
-import { api, demoItems, type Item, type Source } from "../lib";
-import { Footer, ItemGrid, PageTitle } from "../ui";
+import { api, demoItems, pageMetadata, type Item, type Source } from "../lib";
+import { Footer, PageTitle } from "../ui";
+import { LoadMore } from "../load-more";
 type Search = Promise<{ sort?: string; source?: string }>;
+export const metadata = pageMetadata({
+  title: "Tất cả tin thể thao",
+  description:
+    "Dòng tin thể thao mới nhất, tổng hợp và kiểm chứng nguồn, cập nhật theo thời gian thực.",
+  path: "/danh-muc",
+});
+
 export default async function Page({ searchParams }: { searchParams: Search }) {
   const params = await searchParams;
   const sort = params.sort === "top" ? "top" : "recent";
-  const query = new URLSearchParams({ per_page: "20", sort });
-  if (/^\d+$/.test(params.source || "")) query.set("source", params.source!);
+  const listQuery = new URLSearchParams({ sort });
+  if (/^\d+$/.test(params.source || "")) listQuery.set("source", params.source!);
+  const listPath = `/content?${listQuery.toString()}`;
   const [items, sources] = await Promise.all([
-    api<Item[]>(`/content?${query}`, demoItems),
+    api<Item[]>(`${listPath}&per_page=20`, demoItems),
     api<Source[]>("/sources", []),
   ]);
   return (
@@ -49,7 +58,7 @@ export default async function Page({ searchParams }: { searchParams: Search }) {
             </form>
           </aside>
           <section>
-            <ItemGrid items={items} />
+            <LoadMore initial={items} path={listPath} perPage={20} />
           </section>
         </div>
       </main>

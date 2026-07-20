@@ -1,8 +1,14 @@
-import { api, type Item, type SportsEvent } from "../lib";
+import { api, pageMetadata, type Item, type SportsEvent } from "../lib";
 import { Footer, PageTitle } from "../ui";
 import { SportsDesk } from "./sports-desk";
 
 type CatchUp = { duration: number; items: Item[] };
+
+export const metadata = pageMetadata({
+  title: "Bàn thể thao",
+  description: "Tổng hợp tin nóng, lịch thi đấu và video thể thao theo từng môn.",
+  path: "/ban-the-thao",
+});
 
 export default async function SportsDeskPage() {
   const today = new Date().toISOString().slice(0, 10);

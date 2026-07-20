@@ -3,18 +3,48 @@ import { cookies } from "next/headers";
 import {
   api,
   apiWithCookie,
+  articleHref,
   demoItems,
   demoTopics,
+  safeJsonLd,
   type Item,
   type SportsEvent,
   type Source,
   type Topic,
 } from "./lib";
-import { Footer } from "./ui";
+import { Footer, RemoteImage } from "./ui";
 import { DailyBriefPlayer } from "./daily-brief-player";
 
 type HomeData = { today?: Item[]; sports?: Item[]; videos?: Item[] };
 type FeedPreferences = { feed_following_only?: boolean };
+
+const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://baothex.vn";
+const HOME_JSON_LD = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${SITE}/#website`,
+      url: SITE,
+      name: "BaoTheX",
+      inLanguage: "vi",
+      description:
+        "Tin thể thao nổi bật trong ngày, được tổng hợp, kiểm chứng nguồn và biên tập bằng tiếng Việt.",
+      potentialAction: {
+        "@type": "SearchAction",
+        target: { "@type": "EntryPoint", urlTemplate: `${SITE}/tim-kiem?q={search_term_string}` },
+        "query-input": "required name=search_term_string",
+      },
+    },
+    {
+      "@type": "Organization",
+      "@id": `${SITE}/#organization`,
+      name: "BaoTheX",
+      url: SITE,
+      logo: { "@type": "ImageObject", url: `${SITE}/icon.png` },
+    },
+  ],
+};
 
 export default async function Home() {
   const cookieHeader = (await cookies()).toString();
@@ -123,6 +153,10 @@ export default async function Home() {
 
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: safeJsonLd(HOME_JSON_LD) }}
+      />
       <main className="wrap sports-home">
         <section className="newsroom-masthead">
           <div className="issue-line">
@@ -189,9 +223,15 @@ export default async function Home() {
               <Link href="/danh-muc">Xem tất cả →</Link>
             </div>
             {lead ? (
-              <Link className="sports-lead" href={`/noi-dung/${lead.id}`}>
+              <Link className="sports-lead" href={articleHref(lead)}>
                 {lead.image_url ? (
-                  <img src={lead.image_url} alt="" />
+                  <RemoteImage
+                    src={lead.image_url}
+                    alt=""
+                    fetchPriority="high"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                  />
                 ) : (
                   <div className="lead-placeholder">BX</div>
                 )}
@@ -424,10 +464,16 @@ function diversifyVideos(items: Item[], limit: number, maxPerSource = 2) {
 
 function VideoFeature({ item }: { item: Item }) {
   return (
-    <Link className="video-feature" href={`/noi-dung/${item.id}`}>
+    <Link className="video-feature" href={articleHref(item)}>
       <div className="video-feature-media">
         {item.image_url ? (
-          <img src={item.image_url} alt="" />
+          <RemoteImage
+            src={item.image_url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+          />
         ) : (
           <div className="video-placeholder">▶</div>
         )}
@@ -445,9 +491,19 @@ function VideoFeature({ item }: { item: Item }) {
 
 function VideoRow({ item }: { item: Item }) {
   return (
-    <Link className="video-desk-row" href={`/noi-dung/${item.id}`}>
+    <Link className="video-desk-row" href={articleHref(item)}>
       <div>
-        {item.image_url ? <img src={item.image_url} alt="" /> : <span>▶</span>}
+        {item.image_url ? (
+          <RemoteImage
+            src={item.image_url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <span>▶</span>
+        )}
         <i>▶</i>
       </div>
       <section>
@@ -460,9 +516,19 @@ function VideoRow({ item }: { item: Item }) {
 
 function VideoCard({ item }: { item: Item }) {
   return (
-    <Link className="fitness-video-card" href={`/noi-dung/${item.id}`}>
+    <Link className="fitness-video-card" href={articleHref(item)}>
       <div>
-        {item.image_url ? <img src={item.image_url} alt="" /> : <span>▶</span>}
+        {item.image_url ? (
+          <RemoteImage
+            src={item.image_url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <span>▶</span>
+        )}
         <i>▶</i>
       </div>
       <small>{item.source_name || "Kênh thể hình"}</small>
@@ -473,9 +539,15 @@ function VideoCard({ item }: { item: Item }) {
 
 function NewsTile({ item }: { item: Item }) {
   return (
-    <Link className="news-tile" href={`/noi-dung/${item.id}`}>
+    <Link className="news-tile" href={articleHref(item)}>
       {item.image_url ? (
-        <img src={item.image_url} alt="" />
+        <RemoteImage
+          src={item.image_url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+        />
       ) : (
         <div className="tile-placeholder">BX</div>
       )}
@@ -490,9 +562,15 @@ function NewsTile({ item }: { item: Item }) {
 }
 function MosaicCard({ item }: { item: Item }) {
   return (
-    <Link className="news-mosaic-card" href={`/noi-dung/${item.id}`}>
+    <Link className="news-mosaic-card" href={articleHref(item)}>
       {item.image_url ? (
-        <img src={item.image_url} alt="" />
+        <RemoteImage
+          src={item.image_url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+        />
       ) : (
         <div className="mosaic-placeholder">BX</div>
       )}
@@ -510,9 +588,15 @@ function MosaicCard({ item }: { item: Item }) {
 function NewsRow({ item, compact = false }: { item: Item; compact?: boolean }) {
   const score = scorelineFrom(item);
   return (
-    <Link className={`sports-row ${compact ? "compact" : ""}`} href={`/noi-dung/${item.id}`}>
+    <Link className={`sports-row ${compact ? "compact" : ""}`} href={articleHref(item)}>
       {item.image_url ? (
-        <img src={item.image_url} alt="" />
+        <RemoteImage
+          src={item.image_url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+        />
       ) : (
         <div className="row-placeholder">{item.type === "video" ? "▶" : "BX"}</div>
       )}
@@ -643,7 +727,7 @@ function TeamMark({ team }: { team: Team }) {
   return (
     <i className={`team-mark ${team.kind || "country"}`}>
       {team.code ? (
-        <img src={`https://flagcdn.com/w80/${team.code}.png`} alt={`Cờ ${team.name}`} />
+        <RemoteImage src={`https://flagcdn.com/w80/${team.code}.png`} alt={`Cờ ${team.name}`} />
       ) : (
         team.mark
       )}

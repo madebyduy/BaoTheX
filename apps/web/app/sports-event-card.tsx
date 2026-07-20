@@ -1,10 +1,39 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { SportsEvent } from "./lib";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+
+// LiveEventRefresh keeps a live match page current without a manual reload. For
+// an in-progress (or imminent) event it re-renders the server component every
+// 30s via router.refresh(), which re-fetches the low-revalidate event query and
+// updates the scoreboard, status and provenance in place. It renders a small
+// "live" pulse; for finished/scheduled events it does nothing.
+export function LiveEventRefresh({ status }: { status: SportsEvent["status"] }) {
+  const router = useRouter();
+  const isLive = status === "live";
+  useEffect(() => {
+    if (!isLive) return;
+    const timer = window.setInterval(() => router.refresh(), 30000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [isLive, router]);
+  if (!isLive) return null;
+  return (
+    <span className="live-refresh" role="status" aria-label="Đang cập nhật trực tiếp">
+      <i /> TRỰC TIẾP · tự động cập nhật
+    </span>
+  );
+}
 
 export function EventStatus({ event }: { event: SportsEvent }) {
   const labels: Record<string, string> = {

@@ -1,5 +1,13 @@
 import Link from "next/link";
 import { Footer } from "../ui";
+import { pageMetadata } from "../lib";
+
+export const metadata = pageMetadata({
+  title: "Đăng ký",
+  description: "Tạo tài khoản BaoTheX để theo dõi chủ đề yêu thích và nhận bản tin cá nhân hoá.",
+  path: "/dang-ky",
+  index: false,
+});
 import { AuthForm } from "../auth-form";
 export default function Page() {
   return (

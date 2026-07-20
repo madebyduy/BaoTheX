@@ -1,9 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { api, type ContentBody, type Item, type Topic, typeLabel } from "../../lib";
-import { Footer } from "../../ui";
-import { LikeButton, SaveButton, ShareBar } from "../../action-buttons";
+import { notFound, permanentRedirect } from "next/navigation";
+import {
+  api,
+  articleHref,
+  idFromSlug,
+  safeJsonLd,
+  type ContentBody,
+  type Item,
+  type Topic,
+  typeLabel,
+} from "../../lib";
+import { Footer, RemoteImage } from "../../ui";
+import { LikeButton, SaveButton, ShareBar, ReadingProgress } from "../../action-buttons";
 import { ReadingTracker } from "../../product-analytics";
 import { ContentFeedback } from "../../content-feedback";
 
@@ -44,7 +53,8 @@ export async function generateMetadata({
 }: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
-  const { id } = await params;
+  const { id: param } = await params;
+  const id = idFromSlug(param);
   const data = await api<Detail>(`/content/${id}`, {}, ARTICLE_REVALIDATE);
   const item = data.item;
   if (!item) return { title: "Không tìm thấy bài viết" };
@@ -56,7 +66,7 @@ export async function generateMetadata({
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);
-  const url = `${SITE}/noi-dung/${id}`;
+  const url = `${SITE}${articleHref(item)}`;
   const images = item.image_url ? [item.image_url] : undefined;
   return {
     title: item.title,
@@ -82,7 +92,8 @@ export async function generateMetadata({
 }
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const { id: param } = await params;
+  const id = idFromSlug(param);
   const [data, related, newsroom] = await Promise.all([
     api<Detail>(`/content/${id}`, {}, ARTICLE_REVALIDATE),
     api<Item[]>(`/content/${id}/related`, [], ARTICLE_REVALIDATE),
@@ -90,6 +101,13 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   ]);
   if (!data.item) notFound();
   const item = data.item;
+  // Enforce the canonical slug URL. A legacy /noi-dung/123 link, or a stale slug
+  // from before an editor retitled the piece, gets a permanent (308) redirect to
+  // /noi-dung/<slug>-<id> so search engines consolidate on one address.
+  const canonical = articleHref(item);
+  if (`/noi-dung/${param}` !== canonical) {
+    permanentRedirect(canonical);
+  }
   const tracker = <ReadingTracker contentId={item.id} />;
   const body = data.body;
   // A foreign article is summarised, never reproduced.
@@ -116,41 +134,94 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   // Video thường chứa timecode như 0:00, 1:35 nên tuyệt đối không suy diễn
   // các con số trong mô tả thành tỷ số trận đấu.
   const score = item.type === "article" ? scorelineFrom(item.title) : "";
-  const pageUrl = `${SITE}/noi-dung/${item.id}`;
+  // Reading time from the stored word count (~200 wpm). Foreign digests have no
+  // word_count, so it simply falls away rather than showing a wrong number.
+  const readingMinutes = data.article?.word_count
+    ? Math.max(1, Math.round(data.article.word_count / 200))
+    : 0;
+  const updatedLabel =
+    item.updated_at &&
+    item.published_at &&
+    item.updated_at.slice(0, 16) > item.published_at.slice(0, 16)
+      ? formatDateTime(item.updated_at)
+      : "";
+  const pageUrl = `${SITE}${canonical}`;
   // Góc nhìn / editorial pieces store an internal canonical (/goc-nhin/...) and
   // have no external "bài gốc"; only treat http(s) URLs as a real source link.
   const externalSource =
     item.canonical_url && /^https?:\/\//i.test(item.canonical_url) ? item.canonical_url : "";
+  const section = data.topics?.[0];
+  const dateModified =
+    item.updated_at && item.published_at && item.updated_at > item.published_at
+      ? item.updated_at
+      : item.published_at;
+  const breadcrumb = {
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Trang chủ", item: SITE },
+      section
+        ? {
+            "@type": "ListItem",
+            position: 2,
+            name: section.name,
+            item: `${SITE}/chu-de/${section.slug}`,
+          }
+        : {
+            "@type": "ListItem",
+            position: 2,
+            name: typeLabel(item.type),
+            item: `${SITE}/danh-muc`,
+          },
+      { "@type": "ListItem", position: 3, name: item.title, item: pageUrl },
+    ],
+  };
   const jsonLd = {
     "@context": "https://schema.org",
-    "@type": "NewsArticle",
-    headline: item.title,
-    description: (item.summary || item.excerpt || "").slice(0, 300) || undefined,
-    image: item.image_url ? [item.image_url] : undefined,
-    datePublished: item.published_at,
-    dateModified: item.published_at,
-    articleSection: typeLabel(item.type),
-    author: { "@type": "Organization", name: item.source_name || "BaoTheX" },
-    publisher: {
-      "@type": "Organization",
-      name: "BaoTheX",
-      logo: { "@type": "ImageObject", url: `${SITE}/icon.png` },
-    },
-    mainEntityOfPage: { "@type": "WebPage", "@id": pageUrl },
-    isBasedOn: externalSource || undefined,
+    "@graph": [
+      {
+        "@type": "NewsArticle",
+        headline: item.title,
+        description: (item.summary || item.excerpt || "").slice(0, 300) || undefined,
+        image: item.image_url ? [item.image_url] : [`${SITE}${articleHref(item)}/opengraph-image`],
+        datePublished: item.published_at,
+        dateModified,
+        inLanguage: "vi",
+        articleSection: section?.name || typeLabel(item.type),
+        author: { "@type": "Organization", name: item.source_name || "BaoTheX" },
+        publisher: {
+          "@type": "Organization",
+          name: "BaoTheX",
+          logo: { "@type": "ImageObject", url: `${SITE}/icon.png` },
+        },
+        mainEntityOfPage: { "@type": "WebPage", "@id": pageUrl },
+        isBasedOn: externalSource || undefined,
+      },
+      breadcrumb,
+    ],
   };
   return (
     <>
       {tracker}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <ReadingProgress />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd(jsonLd) }} />
       <main className="wrap article-page">
+        <nav className="breadcrumbs" aria-label="Đường dẫn">
+          <Link href="/">Trang chủ</Link>
+          <span aria-hidden>›</span>
+          {section ? (
+            <Link href={`/chu-de/${section.slug}`}>{section.name}</Link>
+          ) : (
+            <Link href="/danh-muc">{typeLabel(item.type)}</Link>
+          )}
+          <span aria-hidden>›</span>
+          <b>{item.title}</b>
+        </nav>
         <div className="article-kicker">
           <span className="tag">{typeLabel(item.type)}</span>
           <span>{item.source_name || "BaoTheX"}</span>
           <span>{formatDate(item.published_at)}</span>
+          {readingMinutes ? <span>{readingMinutes} phút đọc</span> : null}
+          {updatedLabel ? <span className="article-updated">Cập nhật {updatedLabel}</span> : null}
           {score ? <strong className="score-badge">TỶ SỐ {score}</strong> : null}
         </div>
         <h1 className="article-title">{item.title}</h1>
@@ -159,7 +230,13 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
         </p>
         {item.image_url ? (
           <div className="article-hero">
-            <img src={item.image_url} alt="" />
+            <RemoteImage
+              src={item.image_url}
+              alt=""
+              fetchPriority="high"
+              decoding="async"
+              referrerPolicy="no-referrer"
+            />
           </div>
         ) : null}
         <div className="article-actions">
@@ -224,7 +301,13 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
                 rel="noreferrer"
               >
                 {data.video.thumbnail_url || item.image_url ? (
-                  <img src={data.video.thumbnail_url || item.image_url} alt="" />
+                  <RemoteImage
+                    src={(data.video.thumbnail_url || item.image_url)!}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                  />
                 ) : null}
                 <div>
                   <span>VIDEO YOUTUBE · {data.video.channel_title || item.source_name}</span>
@@ -313,7 +396,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               <section className="related-section">
                 <h2>Bài liên quan</h2>
                 {related.map((x) => (
-                  <Link className="related-item" href={`/noi-dung/${x.id}`} key={x.id}>
+                  <Link className="related-item" href={articleHref(x)} key={x.id}>
                     <strong>{x.title}</strong>
                     <small>{x.source_name || "BaoTheX"}</small>
                   </Link>
@@ -326,7 +409,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               <span className="tag">TIN NÓNG</span>
               <h3>Đang được quan tâm</h3>
               {newsroom.slice(0, 5).map((x) => (
-                <Link href={`/noi-dung/${x.id}`} key={x.id}>
+                <Link href={articleHref(x)} key={x.id}>
                   <small>{x.source_name || "BaoTheX"}</small>
                   <strong>{x.title}</strong>
                 </Link>
@@ -336,7 +419,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               <span className="tag">ĐỌC TIẾP</span>
               <h3>Cùng chủ đề</h3>
               {related.slice(0, 4).map((x) => (
-                <Link href={`/noi-dung/${x.id}`} key={x.id}>
+                <Link href={articleHref(x)} key={x.id}>
                   <strong>{x.title}</strong>
                 </Link>
               ))}
@@ -462,6 +545,20 @@ function formatDate(value?: string) {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
+    }).format(new Date(value));
+  } catch {
+    return "";
+  }
+}
+function formatDateTime(value?: string) {
+  if (!value) return "";
+  try {
+    return new Intl.DateTimeFormat("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     }).format(new Date(value));
   } catch {
     return "";

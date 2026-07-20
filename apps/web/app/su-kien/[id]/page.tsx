@@ -1,7 +1,23 @@
+import type { Metadata } from "next";
 import Link from "next/link";
-import { api, type StoryCluster } from "../../lib";
-import { Footer } from "../../ui";
+import { api, articleHref, pageMetadata, type StoryCluster } from "../../lib";
+import { Footer, RemoteImage } from "../../ui";
 import { TruthCenterActions } from "./truth-actions";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const cluster = await api<StoryCluster | null>(`/clusters/${id}`, null);
+  if (!cluster) return { title: "Không tìm thấy sự kiện" };
+  return pageMetadata({
+    title: cluster.representative_title,
+    description: `Toàn cảnh sự kiện qua ${cluster.source_count} nguồn: ${cluster.representative_title}. Đối chiếu và kiểm chứng trên BaoTheX.`,
+    path: `/su-kien/${id}`,
+  });
+}
 
 export default async function StoryPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -93,7 +109,7 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
             <span>TÓM TẮT TRUNG LẬP</span>
             <h2>{primary.title}</h2>
             <p>{primary.summary || primary.excerpt || "Nội dung đang được tổng hợp."}</p>
-            <Link href={`/noi-dung/${primary.id}`}>Đọc bản chi tiết →</Link>
+            <Link href={articleHref(primary)}>Đọc bản chi tiết →</Link>
           </section>
         ) : null}
 
@@ -147,7 +163,7 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
             {(cluster.items || []).map((item) => (
               <div className="truth-table-row" key={item.id}>
                 <strong>{item.source_name || "BaoTheX"}</strong>
-                <Link href={`/noi-dung/${item.id}`}>{item.title}</Link>
+                <Link href={articleHref(item)}>{item.title}</Link>
                 <span>
                   {item.published_at
                     ? new Intl.DateTimeFormat("vi-VN", {
@@ -177,7 +193,13 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
             {(cluster.items || []).map((item) => (
               <article className="cluster-source-card" key={item.id}>
                 {item.image_url ? (
-                  <img src={item.image_url} alt="" />
+                  <RemoteImage
+                    src={item.image_url}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                  />
                 ) : (
                   <div className="cluster-image">BX</div>
                 )}
@@ -190,7 +212,7 @@ export default async function StoryPage({ params }: { params: Promise<{ id: stri
                   </div>
                   <h3>{item.title}</h3>
                   <p>{item.summary || item.excerpt || "Mở bài để xem nội dung đầy đủ."}</p>
-                  <Link href={`/noi-dung/${item.id}`}>Đọc bài →</Link>
+                  <Link href={articleHref(item)}>Đọc bài →</Link>
                 </div>
               </article>
             ))}

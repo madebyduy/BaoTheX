@@ -1,15 +1,25 @@
 import Link from "next/link";
-import { api, type Source } from "../lib";
+import { api, pageMetadata, type Source } from "../lib";
 import { Footer, PageTitle } from "../ui";
 
-const fallbackSources: Source[] = [
-  { id: 1, name: "Journal of Strength & Conditioning", kind: "Nghiên cứu", quality: 5 },
-  { id: 2, name: "Stronger by Science", kind: "Trang tin", quality: 5 },
-  { id: 3, name: "Europe PMC", kind: "Cơ sở dữ liệu", quality: 5 },
-  { id: 4, name: "Jeff Nippard", kind: "YouTube", quality: 4 },
-  { id: 5, name: "Iron Culture", kind: "Podcast", quality: 4 },
-  { id: 6, name: "Barbell Medicine", kind: "Trang tin", quality: 5 },
-];
+const fallbackSources: Source[] =
+  process.env.NODE_ENV === "production"
+    ? []
+    : [
+        { id: 1, name: "Journal of Strength & Conditioning", kind: "Nghiên cứu", quality: 5 },
+        { id: 2, name: "Stronger by Science", kind: "Trang tin", quality: 5 },
+        { id: 3, name: "Europe PMC", kind: "Cơ sở dữ liệu", quality: 5 },
+        { id: 4, name: "Jeff Nippard", kind: "YouTube", quality: 4 },
+        { id: 5, name: "Iron Culture", kind: "Podcast", quality: 4 },
+        { id: 6, name: "Barbell Medicine", kind: "Trang tin", quality: 5 },
+      ];
+
+export const metadata = pageMetadata({
+  title: "Nguồn tin",
+  description:
+    "Danh sách các nguồn báo chí và kênh thể thao mà BaoTheX tổng hợp, đối chiếu và kiểm chứng.",
+  path: "/nguon",
+});
 
 export default async function Page() {
   const sources = await api<Source[]>("/sources", fallbackSources);

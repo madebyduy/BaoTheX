@@ -837,24 +837,33 @@ func (r *ContentRepo) AdminUpdate(ctx context.Context, id int64, title, body, st
 	if keyPoints != nil {
 		kp = keyPoints
 	}
-	tag, err := r.db.Pool.Exec(ctx, `
-		UPDATE content_items SET
-			title           = COALESCE($2, title),
-			status          = COALESCE($3::content_status, status),
-			summary         = COALESCE($4, summary),
-			key_points      = COALESCE($5::jsonb, key_points),
-			editorial_boost = COALESCE($6, editorial_boost)
-		WHERE id=$1`, id, title, status, summary, kp, editorialBoost)
-	if err != nil {
+	return r.db.WithTx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE content_items SET
+				title           = COALESCE($2, title),
+				status          = COALESCE($3::content_status, status),
+				summary         = COALESCE($4, summary),
+				key_points      = COALESCE($5::jsonb, key_points),
+				editorial_boost = COALESCE($6, editorial_boost)
+			WHERE id=$1`, id, title, status, summary, kp, editorialBoost)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		if body != nil {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO content_bodies
+					(content_id, original_language, original_body, vietnamese_body, translation_status)
+				VALUES ($1, 'vi', $2, $2, 'ready')
+				ON CONFLICT (content_id) DO UPDATE SET
+					original_body=EXCLUDED.original_body,
+					vietnamese_body=EXCLUDED.vietnamese_body,
+					translation_status='ready', updated_at=now()`, id, body)
+		}
 		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
-	}
-	if body != nil {
-		_, err = r.db.Pool.Exec(ctx, `UPDATE content_bodies SET original_body=$2,vietnamese_body=$2,updated_at=now() WHERE content_id=$1`, id, body)
-	}
-	return nil
+	})
 }
 
 // SetEditorialBoost sets the editorial boost (used by /highlight).

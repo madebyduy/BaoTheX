@@ -15,6 +15,9 @@ services:
       API_ADDR: :8080
       PUBLIC_BASE_URL: https://${DOMAIN}
       CORS_ORIGINS: https://${DOMAIN}
+      # API is not published directly; only the Caddy container on Docker's
+      # private bridge may provide the client forwarding chain.
+      TRUSTED_PROXY_CIDRS: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
       MEDIA_STORAGE_DIR: /var/lib/baothex/media
       MEDIA_PUBLIC_BASE_URL: https://${DOMAIN}
       TELEGRAM_POLLING: "false"
@@ -48,8 +51,10 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: https://${DOMAIN}
+        NEXT_PUBLIC_SITE_URL: https://${DOMAIN}
     environment:
       NEXT_PUBLIC_API_URL: https://${DOMAIN}
+      API_INTERNAL_URL: http://api:8080
     depends_on: [api]
     restart: unless-stopped
 

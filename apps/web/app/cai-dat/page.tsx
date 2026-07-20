@@ -1,5 +1,13 @@
 import { Footer, PageTitle } from "../ui";
+import { pageMetadata } from "../lib";
 import { NotificationSettings, TelegramSettings } from "../account-panels";
+
+export const metadata = pageMetadata({
+  title: "Cài đặt",
+  description: "Tùy chỉnh dòng tin, thông báo và tài khoản BaoTheX của bạn.",
+  path: "/cai-dat",
+  index: false,
+});
 import { PWAControls } from "../pwa-controls";
 import { FeedCustomizationSettings } from "../feed-customization";
 export default function Page() {

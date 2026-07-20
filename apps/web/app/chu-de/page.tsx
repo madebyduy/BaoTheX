@@ -1,6 +1,13 @@
 import Link from "next/link";
-import { api, demoTopics, type Topic } from "../lib";
+import { api, demoTopics, pageMetadata, type Topic } from "../lib";
 import { Footer, PageTitle } from "../ui";
+export const metadata = pageMetadata({
+  title: "Chủ đề thể thao",
+  description:
+    "Theo dõi các chủ đề thể thao yêu thích: bóng đá, bóng rổ, tennis, esports và nhiều môn khác.",
+  path: "/chu-de",
+});
+
 export default async function Page() {
   const topics = await api<Topic[]>("/topics", demoTopics);
   return (

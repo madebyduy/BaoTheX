@@ -1,5 +1,13 @@
 import { Footer, PageTitle } from "../ui";
+import { pageMetadata } from "../lib";
 import { SavedContent } from "../saved-content";
+
+export const metadata = pageMetadata({
+  title: "Nội dung đã lưu",
+  description: "Danh sách bài viết và video bạn đã lưu trên BaoTheX.",
+  path: "/luu",
+  index: false,
+});
 export default function Page() {
   return (
     <>

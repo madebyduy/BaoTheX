@@ -4,6 +4,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -69,8 +70,14 @@ func writeDomainError(w http.ResponseWriter, log *slog.Logger, err error) {
 // decodeJSON decodes a request body into v, returning false (and writing an
 // error) on failure.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(v); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := decoder.Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid JSON body")
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "bad_request", "JSON body must contain exactly one value")
 		return false
 	}
 	return true
@@ -79,7 +86,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 // pagination reads ?page= & ?per_page= with sane defaults and caps.
 func pagination(r *http.Request) (page, perPage, offset int) {
 	page = atoiDefault(r.URL.Query().Get("page"), 1)
-	if page < 1 {
+	if page < 1 || page > 10_000 {
 		page = 1
 	}
 	perPage = atoiDefault(r.URL.Query().Get("per_page"), 20)
@@ -102,7 +109,7 @@ func atoiDefault(s string, def int) int {
 // pathInt parses an int path value (e.g. r.PathValue("id")).
 func pathInt(r *http.Request, name string) (int64, bool) {
 	n, err := strconv.ParseInt(r.PathValue(name), 10, 64)
-	if err != nil {
+	if err != nil || n <= 0 {
 		return 0, false
 	}
 	return n, true

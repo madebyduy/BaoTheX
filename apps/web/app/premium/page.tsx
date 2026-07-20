@@ -1,5 +1,13 @@
 import { Footer } from "../ui";
+import { pageMetadata } from "../lib";
 import { CheckoutButton } from "./checkout-button";
+
+export const metadata = pageMetadata({
+  title: "BaoTheX Premium",
+  description:
+    "Nâng cấp Premium: bản tin chuyên sâu, trải nghiệm không quảng cáo và tiện ích riêng cho người hâm mộ.",
+  path: "/premium",
+});
 import { PremiumStatus } from "./premium-status";
 import { api } from "../lib";
 

@@ -185,7 +185,9 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 	if err != nil {
 		return err
 	}
-	_ = h.DB.Content.SetStatus(ctx, item.ID, domain.StatusProcessing)
+	if err := h.DB.Content.SetStatus(ctx, item.ID, domain.StatusProcessing); err != nil {
+		return err
+	}
 	if item.Type == domain.ContentArticle {
 		if body, bodyErr := h.DB.Content.GetBody(ctx, item.ID); bodyErr == nil && ingest.BlockedArticleText(body.OriginalBody) {
 			return h.DB.Content.QuarantineBlockedArticle(ctx, item.ID)
@@ -239,7 +241,10 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 	if err := h.rescore(ctx, item); err != nil {
 		return err
 	}
-	item, _ = h.DB.Content.Get(ctx, item.ID)
+	item, err = h.DB.Content.Get(ctx, item.ID)
+	if err != nil {
+		return err
+	}
 
 	// Articles are never public from a headline/excerpt alone. Foreign articles
 	// additionally remain hidden until the Vietnamese edition has been stored.

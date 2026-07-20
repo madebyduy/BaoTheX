@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"repwire/internal/domain"
 )
@@ -16,6 +17,10 @@ type JobRepo struct{ db *DB }
 
 // ErrNoJob is returned by Dequeue when the queue is empty.
 var ErrNoJob = errors.New("no job available")
+
+// ErrJobLeaseLost means another worker/reaper already changed the claimed job.
+// The stale worker must not overwrite the newer owner's state.
+var ErrJobLeaseLost = errors.New("job lease lost")
 
 // EnqueueOpts tunes an Enqueue call.
 type EnqueueOpts struct {
@@ -100,26 +105,43 @@ func (r *JobRepo) Dequeue(ctx context.Context, workerID string) (*domain.Job, er
 }
 
 // Done marks a job as successfully completed.
-func (r *JobRepo) Done(ctx context.Context, id int64) error {
-	_, err := r.db.Pool.Exec(ctx,
-		`UPDATE jobs SET status='done', finished_at=now(), last_error=NULL WHERE id=$1`, id)
-	return err
+func (r *JobRepo) Done(ctx context.Context, id int64, workerID string) error {
+	tag, err := r.db.Pool.Exec(ctx, `
+		UPDATE jobs SET status='done', finished_at=now(), last_error=NULL
+		WHERE id=$1 AND status='running' AND locked_by=$2`, id, workerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrJobLeaseLost
+	}
+	return nil
 }
 
 // Fail records an error and either reschedules the job with backoff or, once
 // attempts >= max_attempts, marks it dead.
-func (r *JobRepo) Fail(ctx context.Context, j *domain.Job, cause error, backoff time.Duration) error {
+func (r *JobRepo) Fail(ctx context.Context, j *domain.Job, workerID string, cause error, backoff time.Duration) error {
 	msg := cause.Error()
+	var tag pgconn.CommandTag
+	var err error
 	if j.Attempts >= j.MaxAttempts {
-		_, err := r.db.Pool.Exec(ctx,
-			`UPDATE jobs SET status='dead', finished_at=now(), last_error=$2 WHERE id=$1`,
-			j.ID, msg)
+		tag, err = r.db.Pool.Exec(ctx, `
+			UPDATE jobs SET status='dead', finished_at=now(), last_error=$2
+			WHERE id=$1 AND status='running' AND locked_by=$3`, j.ID, msg, workerID)
+	} else {
+		tag, err = r.db.Pool.Exec(ctx, `
+			UPDATE jobs SET status='pending', run_at=now()+$2::interval, last_error=$3,
+			       locked_by=NULL, locked_at=NULL
+			WHERE id=$1 AND status='running' AND locked_by=$4`,
+			j.ID, backoff.String(), msg, workerID)
+	}
+	if err != nil {
 		return err
 	}
-	_, err := r.db.Pool.Exec(ctx,
-		`UPDATE jobs SET status='pending', run_at=now()+$2::interval, last_error=$3, locked_by=NULL, locked_at=NULL WHERE id=$1`,
-		j.ID, backoff.String(), msg)
-	return err
+	if tag.RowsAffected() == 0 {
+		return ErrJobLeaseLost
+	}
+	return nil
 }
 
 // ReapStuck resets jobs stuck in 'running' beyond timeout back to 'pending'

@@ -1,8 +1,15 @@
 import js from "@eslint/js";
+import { FlatCompat } from "@eslint/eslintrc";
 import eslintPluginPrettier from "eslint-plugin-prettier/recommended";
 import globals from "globals";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
+
+const compat = new FlatCompat({
+  baseDirectory: path.dirname(fileURLToPath(import.meta.url)),
+});
 
 // The app is Next.js App Router, and only that. The TanStack Start scaffold this
 // config used to work around was removed once it was established that app/
@@ -38,5 +45,6 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
+  ...compat.extends("next/core-web-vitals"),
   eslintPluginPrettier,
 );

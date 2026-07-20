@@ -271,7 +271,10 @@ func (r *AnalysisRepo) GetMaterials(ctx context.Context, clusterID int64) ([]dom
 		 COALESCE(c.summary,''),c.key_points,
 		 COALESCE(NULLIF(b.vietnamese_body,''),CASE WHEN c.language='vi' THEN b.original_body END,'')
 		FROM story_cluster_items sci
-		JOIN content_items c ON c.id=sci.content_id AND c.status='ready'
+		// A human can explicitly send a newly ingested item from the review queue
+		// to the desk. Keep it in the source packet, but never include failed or
+		// hidden content.
+		JOIN content_items c ON c.id=sci.content_id AND c.status IN ('ready','needs_review')
 		JOIN sources s ON s.id=c.source_id
 		LEFT JOIN content_bodies b ON b.content_id=c.id
 		WHERE sci.cluster_id=$1
@@ -294,6 +297,69 @@ func (r *AnalysisRepo) GetMaterials(ctx context.Context, clusterID int64) ([]dom
 		materials = append(materials, m)
 	}
 	return materials, rows.Err()
+}
+
+// QueueContentForAnalysis lets an editor deliberately nominate a reviewed
+// article's story cluster for a BaoTheX analysis. The minimum independent-source
+// check happens before a job is created: a witty point of view is still not a
+// licence to manufacture corroboration from one report.
+func (r *AnalysisRepo) QueueContentForAnalysis(ctx context.Context, contentID int64) (int64, error) {
+	var clusterID int64
+	err := r.db.WithTx(ctx, func(tx pgx.Tx) error {
+		var contentType domain.ContentType
+		err := tx.QueryRow(ctx, `SELECT c.type,sci.cluster_id
+			FROM content_items c
+			JOIN story_cluster_items sci ON sci.content_id=c.id
+			WHERE c.id=$1`, contentID).Scan(&contentType, &clusterID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: bai viet chua duoc gom vao cum su kien", domain.ErrValidation)
+		}
+		if err != nil {
+			return err
+		}
+		if contentType != domain.ContentArticle {
+			return fmt.Errorf("%w: chi bai viet moi co the dua vao hang cho Goc nhin", domain.ErrValidation)
+		}
+
+		var sources, highQuality, velocity24, velocity6 int
+		err = tx.QueryRow(ctx, `SELECT count(DISTINCT c.source_id)::int,
+			count(DISTINCT c.source_id) FILTER (WHERE s.quality >= 4)::int,
+			count(*) FILTER (WHERE c.published_at >= now()-interval '24 hours')::int,
+			count(*) FILTER (WHERE c.published_at >= now()-interval '6 hours')::int
+			FROM story_cluster_items sci
+			JOIN content_items c ON c.id=sci.content_id
+			JOIN sources s ON s.id=c.source_id
+			LEFT JOIN content_bodies b ON b.content_id=c.id
+			WHERE sci.cluster_id=$1
+			  AND c.type='article'
+			  AND c.status IN ('ready','needs_review')
+			  AND (c.language='vi' OR (b.translation_status='ready' AND length(trim(COALESCE(b.vietnamese_body,'')))>=400))`, clusterID).
+			Scan(&sources, &highQuality, &velocity24, &velocity6)
+		if err != nil {
+			return err
+		}
+		if sources < 3 {
+			return fmt.Errorf("%w: can it nhat 3 nguon doc lap de viet Goc nhin (hien co %d)", domain.ErrValidation, sources)
+		}
+
+		tag, err := tx.Exec(ctx, `INSERT INTO analysis_candidates
+			(cluster_id,score,source_count,high_quality_sources,velocity_24h,velocity_6h,heat_score,status,selected_at,updated_at)
+			VALUES ($1,0,$2,$3,$4,$5,0,'drafting',now(),now())
+			ON CONFLICT (cluster_id) DO UPDATE SET
+			 source_count=EXCLUDED.source_count,high_quality_sources=EXCLUDED.high_quality_sources,
+			 velocity_24h=EXCLUDED.velocity_24h,velocity_6h=EXCLUDED.velocity_6h,
+			 status='drafting',selected_at=now(),last_error=NULL,updated_at=now()
+			WHERE analysis_candidates.status IN ('proposed','failed','dismissed')`,
+			clusterID, sources, highQuality, velocity24, velocity6)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return fmt.Errorf("%w: chu de nay dang duoc viet, cho duyet, hoac da xuat ban", domain.ErrConflict)
+		}
+		return nil
+	})
+	return clusterID, err
 }
 
 func (r *AnalysisRepo) MarkDrafting(ctx context.Context, clusterID int64) error {
