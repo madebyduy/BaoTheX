@@ -15,6 +15,7 @@ import { Footer, RemoteImage } from "../../ui";
 import { LikeButton, SaveButton, ShareBar, ReadingProgress } from "../../action-buttons";
 import { ReadingTracker } from "../../product-analytics";
 import { ContentFeedback } from "../../content-feedback";
+import { PerspectiveAction } from "./perspective-action";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL || "https://baothex.vn";
 // generateMetadata and the page both need the article. Using the SAME revalidate
@@ -249,6 +250,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           sourceId={item.source_id}
           topicId={data.topics?.[0]?.id}
         />
+        <PerspectiveAction contentId={item.id} />
         <div className="article-layout">
           <aside className="article-aside">
             <span className="eyebrow">THÔNG TIN BÀI</span>
@@ -322,19 +324,16 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               </a>
             ) : null}
             <section className="article-content">
-              {item.summary ? (
+              {/* Only foreign stories get a summary box here: their digest is
+                  several paragraphs and IS the article. For a native article the
+                  summary already appears as the lede under the title, so a second
+                  copy here was pure duplication — omit it. */}
+              {item.summary && isForeign ? (
                 <div className="article-summary">
-                  <span>{isForeign ? "TÓM TẮT CỦA BAOTHEX" : "TÓM TẮT NHANH"}</span>
-                  {/* A foreign digest is written as several paragraphs and is the
-                      whole article — render the breaks. A native summary is one
-                      short blurb above the real body, so it stays a single p. */}
-                  {isForeign ? (
-                    splitParagraphs(item.summary).map((p, i) => (
-                      <p key={`${i}-${p.slice(0, 12)}`}>{p}</p>
-                    ))
-                  ) : (
-                    <p>{item.summary}</p>
-                  )}
+                  <span>TÓM TẮT CỦA BAOTHEX</span>
+                  {splitParagraphs(item.summary).map((p, i) => (
+                    <p key={`${i}-${p.slice(0, 12)}`}>{p}</p>
+                  ))}
                 </div>
               ) : null}
               {/* Key points come first for a foreign story: with no body to

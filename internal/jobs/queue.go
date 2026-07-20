@@ -111,6 +111,24 @@ func (e *Enqueuer) EnqueueGenerateAnalysis(ctx context.Context, clusterID int64)
 	})
 }
 
+// EnqueueGeneratePerspective queues an on-demand single-article Góc nhìn draft.
+// Deduped per article so a double-click reuses the pending job instead of
+// spending the editorial budget twice on the same piece.
+func (e *Enqueuer) EnqueueGeneratePerspective(ctx context.Context, contentID, clusterID int64) error {
+	dedupKey := fmt.Sprintf("article-perspective:%d", contentID)
+	if woke, err := e.repo.WakePendingByDedup(ctx, dedupKey); err != nil {
+		return err
+	} else if woke {
+		return nil
+	}
+	return e.repo.Enqueue(ctx, domain.JobGeneratePerspective,
+		domain.PerspectivePayload{ContentID: contentID, ClusterID: clusterID}, postgres.EnqueueOpts{
+			DedupKey:    dedupKey,
+			Priority:    3,
+			MaxAttempts: 3,
+		})
+}
+
 // backoff returns an exponential backoff duration with jitter, capped at 2h.
 func backoff(attempt int) time.Duration {
 	d := time.Duration(math.Pow(2, float64(attempt))) * time.Minute // 2,4,8,16,32...

@@ -362,6 +362,65 @@ func (r *AnalysisRepo) QueueContentForAnalysis(ctx context.Context, contentID in
 	return clusterID, err
 }
 
+// QueueContentForPerspective is the single-article sibling of
+// QueueContentForAnalysis. It deliberately SKIPS the three-source gate — a Góc
+// nhìn written on one article is an editorial choice, not a cross-source
+// synthesis — but reuses the same candidate row so the draft flows through the
+// exact same review-and-publish desk. It returns the article's cluster id.
+func (r *AnalysisRepo) QueueContentForPerspective(ctx context.Context, contentID int64) (int64, error) {
+	var clusterID int64
+	err := r.db.WithTx(ctx, func(tx pgx.Tx) error {
+		var contentType domain.ContentType
+		err := tx.QueryRow(ctx, `SELECT c.type,sci.cluster_id
+			FROM content_items c
+			JOIN story_cluster_items sci ON sci.content_id=c.id
+			WHERE c.id=$1`, contentID).Scan(&contentType, &clusterID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: bai viet chua duoc gom vao cum su kien", domain.ErrValidation)
+		}
+		if err != nil {
+			return err
+		}
+		if contentType != domain.ContentArticle {
+			return fmt.Errorf("%w: chi bai viet moi co the tao Goc nhin", domain.ErrValidation)
+		}
+
+		// Metrics are for the desk's display only here; unlike the analysis path
+		// they do not gate whether the draft may be written.
+		var sources, highQuality, velocity24, velocity6 int
+		err = tx.QueryRow(ctx, `SELECT count(DISTINCT c.source_id)::int,
+			count(DISTINCT c.source_id) FILTER (WHERE s.quality >= 4)::int,
+			count(*) FILTER (WHERE c.published_at >= now()-interval '24 hours')::int,
+			count(*) FILTER (WHERE c.published_at >= now()-interval '6 hours')::int
+			FROM story_cluster_items sci
+			JOIN content_items c ON c.id=sci.content_id
+			JOIN sources s ON s.id=c.source_id
+			WHERE sci.cluster_id=$1 AND c.type='article'`, clusterID).
+			Scan(&sources, &highQuality, &velocity24, &velocity6)
+		if err != nil {
+			return err
+		}
+
+		tag, err := tx.Exec(ctx, `INSERT INTO analysis_candidates
+			(cluster_id,score,source_count,high_quality_sources,velocity_24h,velocity_6h,heat_score,status,selected_at,updated_at)
+			VALUES ($1,0,$2,$3,$4,$5,0,'drafting',now(),now())
+			ON CONFLICT (cluster_id) DO UPDATE SET
+			 source_count=EXCLUDED.source_count,high_quality_sources=EXCLUDED.high_quality_sources,
+			 velocity_24h=EXCLUDED.velocity_24h,velocity_6h=EXCLUDED.velocity_6h,
+			 status='drafting',selected_at=now(),last_error=NULL,updated_at=now()
+			WHERE analysis_candidates.status IN ('proposed','failed','dismissed')`,
+			clusterID, sources, highQuality, velocity24, velocity6)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return fmt.Errorf("%w: chu de nay dang duoc viet, cho duyet, hoac da xuat ban", domain.ErrConflict)
+		}
+		return nil
+	})
+	return clusterID, err
+}
+
 func (r *AnalysisRepo) MarkDrafting(ctx context.Context, clusterID int64) error {
 	tag, err := r.db.Pool.Exec(ctx, `UPDATE analysis_candidates SET status='drafting',selected_at=now(),last_error=NULL,updated_at=now() WHERE cluster_id=$1 AND status IN ('proposed','failed','needs_review')`, clusterID)
 	if err != nil {

@@ -66,6 +66,29 @@ func (s *Server) handleAdminQueueContentAnalysis(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusAccepted, map[string]any{"queued": true, "content_id": contentID, "cluster_id": clusterID}, nil)
 }
 
+// handleAdminGeneratePerspective drafts a Góc nhìn from ONE article on demand.
+// Unlike handleAdminQueueContentAnalysis it does not require three sources: the
+// editor is choosing to write a perspective on this single piece. The result is
+// still a draft that must be reviewed and published from the analysis desk.
+func (s *Server) handleAdminGeneratePerspective(w http.ResponseWriter, r *http.Request) {
+	contentID, ok := pathInt(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid content id")
+		return
+	}
+	clusterID, err := s.db.Analysis.QueueContentForPerspective(r.Context(), contentID)
+	if err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	if err := s.enqueue.EnqueueGeneratePerspective(r.Context(), contentID, clusterID); err != nil {
+		_ = s.db.Analysis.MarkFailed(r.Context(), clusterID, err)
+		writeDomainError(w, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"queued": true, "content_id": contentID, "cluster_id": clusterID}, nil)
+}
+
 func (s *Server) handleAdminPublishAnalysis(w http.ResponseWriter, r *http.Request) {
 	clusterID, ok := pathInt(r, "id")
 	if !ok {

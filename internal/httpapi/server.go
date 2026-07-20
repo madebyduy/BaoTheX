@@ -205,6 +205,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH "+v1+"/admin/content/{id}", requireAdmin(s.handleAdminUpdateContent))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/topics", requireAdmin(s.handleAdminSetTopics))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/analysis-queue", requireAdmin(s.handleAdminQueueContentAnalysis))
+	mux.HandleFunc("POST "+v1+"/admin/content/{id}/perspective", requireAdmin(s.handleAdminGeneratePerspective))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/highlight", requireAdmin(s.handleAdminHighlight))
 	mux.HandleFunc("POST "+v1+"/admin/content/{id}/hide", requireAdmin(s.handleAdminHideContent))
 	mux.HandleFunc("PATCH "+v1+"/admin/research/{id}", requireAdmin(s.handleAdminUpdateResearch))

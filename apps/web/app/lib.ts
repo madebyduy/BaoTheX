@@ -176,7 +176,13 @@ function safeFallback<T>(fallback: T): T {
 }
 
 function reportAPIFailure(path: string, detail: string) {
-  console.error(`[BaoTheX API] ${path}: ${detail}`);
+  // Warn, not error: every caller of api() already degrades gracefully to a
+  // fallback, so an upstream hiccup (a 503 while the audio brief is still being
+  // generated, a background ISR revalidation that missed) is a handled
+  // condition, not a crash. Logging it at error level made Next.js 15 dev
+  // promote it into a full-screen error overlay for something the page had
+  // already recovered from.
+  console.warn(`[BaoTheX API] ${path}: ${detail}`);
 }
 // Public content is cached and revalidated in the background (ISR). Without a
 // default the whole site refetched every request, adding a Tokyo round-trip per

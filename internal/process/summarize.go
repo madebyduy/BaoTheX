@@ -380,6 +380,71 @@ NGUYÊN LIỆU ĐÃ DẪN NGUỒN:
 	return &out, nil
 }
 
+// perspectiveMinWords keeps an editor-requested single-article Góc nhìn from
+// coming back as a stub. It is lower than analysisMinWords because a one-source
+// perspective is a focused take, not a multi-source synthesis.
+const perspectiveMinWords = 350
+
+// WriteArticlePerspective drafts an editor-requested Góc nhìn from ONE article.
+// Unlike WriteClusterAnalysis it does not synthesise many sources: it takes a
+// single article as the factual basis and asks for an evaluative take on the
+// EVENT — its meaning, cause, consequence and the thing worth noticing — rather
+// than a re-summary that hugs the original. The draft is always for human review.
+func (s *Summarizer) WriteArticlePerspective(ctx context.Context, title, sourceName, body, summary string) (*domain.AnalysisDraft, error) {
+	src := strings.TrimSpace(sourceName)
+	if src == "" {
+		src = "nguồn gốc"
+	}
+	basis := strings.TrimSpace(body)
+	if basis == "" {
+		basis = strings.TrimSpace(summary)
+	}
+	prompt := fmt.Sprintf(`Bạn là cây bút Góc nhìn của BaoTheX. Biên tập viên yêu cầu bạn viết một bản NHÁP "Góc nhìn" dựa trên MỘT bài báo dưới đây, để người duyệt trước khi xuất bản.
+
+BẢN CHẤT CÔNG VIỆC — ĐỌC KỸ:
+- Đây KHÔNG phải tóm tắt lại bài báo. Bài báo chỉ là NGUYÊN LIỆU DỮ KIỆN. Nhiệm vụ của bạn là đưa ra GÓC NHÌN, một nhận định, đánh giá về SỰ KIỆN dựa trên dữ kiện đó.
+- Đừng đi tuần tự theo bài gốc. Hãy chọn một góc tiếp cận: ý nghĩa thật sự của sự kiện, nguyên nhân sâu xa, hệ quả sắp tới, một nghịch lý, một xu thế mà sự kiện phản ánh, hoặc điều mà người hâm mộ nên nhớ.
+- Người đọc có thể đã biết chuyện gì xảy ra; giá trị bạn thêm vào là CÁCH HIỂU và CÁCH ĐÁNH GIÁ sự kiện, không phải kể lại.
+
+CÁCH VIẾT:
+1. Mở bài đi thẳng vào góc nhìn hoặc một quan sát đắt, không mở bằng câu tóm tắt vô thưởng vô phạt.
+2. Dùng dữ kiện trong bài (tên người, đội, tỷ số, mốc thời gian, số liệu) làm bằng chứng cho nhận định — trích đúng, không bịa, không phóng đại.
+3. Triển khai đánh giá: vì sao chuyện này quan trọng, nó nói lên điều gì, dẫn tới đâu. Có thể liên hệ bối cảnh rộng hơn nhưng không bịa sự kiện mới ngoài bài.
+4. Kết bằng một nhận định đọng lại, một hệ quả đang chờ, hoặc một câu hỏi sắc (tối đa MỘT câu hỏi, chỉ khi sự kiện thật sự có tranh cãi/lựa chọn khó).
+
+GIỌNG VĂN & UY TÍN (bất di bất dịch):
+- Giọng BaoTheX: dí dỏm, duyên, am hiểu, trò chuyện với độc giả; không giật gân, không teencode, không lên lớp.
+- Tách bạch SỰ THẬT với GÓC NHÌN: nhận định/ví von/đánh giá không được viết như dữ kiện đã xác nhận. Dùng tự nhiên các cụm như "theo Góc nhìn BaoTheX", "công bằng mà nói".
+- Mọi dữ kiện thực tế bám theo bài gốc và ghi rõ nguồn là %s khi cần; KHÔNG bịa số liệu, phát ngôn, giai thoại. Không dùng từ tuyệt đối ("chắc chắn", "luôn luôn", "phải"). Không bôi nhọ đời tư/ngoại hình/dân tộc/tôn giáo. Chữ ký do hệ thống thêm sau.
+
+Chỉ trả JSON đúng schema, không thêm chữ nào khác:
+{"title":"tiêu đề nêu rõ góc nhìn/nhận định, có duyên nhưng không giật gân","summary":"2-3 câu nêu luận điểm chính của góc nhìn","body":"bài 600-1000 từ, chia đoạn tự nhiên","key_points":["3-5 ý nhận định đáng nhớ"]}
+
+TÊN NGUỒN GỐC: %s
+TIÊU ĐỀ BÀI GỐC: %s
+NỘI DUNG BÀI GỐC (nguyên liệu dữ kiện):
+%s
+TÓM TẮT SẴN CÓ (tham khảo): %s`,
+		src, src, title, clip(basis, 12000), strings.TrimSpace(summary))
+
+	raw, err := s.completeEditorial(ctx, prompt, 6000)
+	if err != nil {
+		return nil, err
+	}
+	var out domain.AnalysisDraft
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &out); err != nil {
+		return nil, fmt.Errorf("parse perspective draft: %w", err)
+	}
+	if strings.TrimSpace(out.Title) == "" || len(strings.Fields(out.Body)) < perspectiveMinWords {
+		return nil, fmt.Errorf("perspective draft too short or missing title (got %d words)",
+			len(strings.Fields(out.Body)))
+	}
+	if out.KeyPoints == nil {
+		out.KeyPoints = []string{}
+	}
+	return &out, nil
+}
+
 // analysisMinWords is the floor below which a draft is a stub rather than an
 // article. The prompt asks for 1,200-1,800 words; this leaves room for a model
 // that runs short without letting through something no editor could work with.

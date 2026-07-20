@@ -35,7 +35,11 @@ const (
 	JobFollowAlert      = "follow_alert"
 	JobGenerateAudio    = "generate_audio_brief"
 	JobGenerateAnalysis = "generate_cluster_analysis"
-	JobSendPremiumBrief = "send_premium_audio_brief"
+	// JobGeneratePerspective drafts a single-article "Góc nhìn": an editor's
+	// on-demand, evaluative take on the event described by one article, rather
+	// than the multi-source cluster synthesis that JobGenerateAnalysis produces.
+	JobGeneratePerspective = "generate_article_perspective"
+	JobSendPremiumBrief    = "send_premium_audio_brief"
 )
 
 // Job is one unit of background work stored in the jobs table.
@@ -96,5 +100,13 @@ type PremiumBriefPayload struct {
 }
 
 type AnalysisPayload struct {
+	ClusterID int64 `json:"cluster_id"`
+}
+
+// PerspectivePayload targets one article for an on-demand Góc nhìn draft. It
+// carries the cluster id too so the handler can mark the candidate row (created
+// by the enqueuing endpoint) without a second lookup.
+type PerspectivePayload struct {
+	ContentID int64 `json:"content_id"`
 	ClusterID int64 `json:"cluster_id"`
 }

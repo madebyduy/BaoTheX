@@ -59,8 +59,9 @@ func (h *Handlers) Register() map[string]HandlerFunc {
 		domain.JobSendDaily:        h.handleSendDaily,
 		domain.JobFollowAlert:      h.handleFollowAlert,
 		domain.JobGenerateAudio:    h.handleGenerateAudio,
-		domain.JobGenerateAnalysis: h.handleGenerateAnalysis,
-		domain.JobSendPremiumBrief: h.handleSendPremiumBrief,
+		domain.JobGenerateAnalysis:    h.handleGenerateAnalysis,
+		domain.JobGeneratePerspective: h.handleGeneratePerspective,
+		domain.JobSendPremiumBrief:    h.handleSendPremiumBrief,
 	}
 }
 

@@ -76,6 +76,19 @@ export function AnalysisDesk({ focus = "all" }: { focus?: "all" | "review" }) {
     void load().catch((error: Error) => setMessage(error.message));
   }, [load]);
 
+  // While any topic is being written (status "drafting"), poll so the card
+  // flips to "chờ duyệt" — or "viết lỗi" — on its own. Without this the editor
+  // stared at a static "Đang viết nháp" with no way to tell if the job was
+  // running or stuck. Polling stops the moment nothing is drafting.
+  const anyDrafting = items.some((item) => item.status === "drafting");
+  useEffect(() => {
+    if (!anyDrafting) return;
+    const timer = setInterval(() => {
+      void load().catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [anyDrafting, load]);
+
   async function action(clusterID: number, name: "generate" | "dismiss") {
     setMessage("Đang xử lý…");
     const response = await fetch(`${API}/api/v1/admin/analysis-candidates/${clusterID}/${name}`, {
@@ -340,6 +353,15 @@ function CandidateCard({
       </div>
       <div className="candidate-copy">
         <small className={`st-${item.status}`}>{statusLabel(item.status)}</small>
+        {/* Visible progress while the AI writes: a spinner plus a promise that
+            the card will update itself, so the editor never wonders whether the
+            job is running or stuck. */}
+        {item.status === "drafting" ? (
+          <div className="candidate-drafting" role="status" aria-live="polite">
+            <span className="btx-spinner" aria-hidden />
+            <span>AI đang viết bản nháp… thẻ này sẽ tự cập nhật khi xong.</span>
+          </div>
+        ) : null}
         {/* A draft exists → the headline opens it. Editors kept saying they
             could not click into anything, because the title was plain text and
             the only way in was a small secondary button. */}
