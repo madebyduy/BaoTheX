@@ -1,25 +1,34 @@
 import type { Metadata } from "next";
-import { Be_Vietnam_Pro, Manrope, Roboto_Mono } from "next/font/google";
+import { Archivo, Be_Vietnam_Pro, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { SiteHeader } from "./ui";
 
 // Fonts are self-hosted and preloaded by next/font — no render-blocking round
 // trip to fonts.googleapis.com, and zero layout shift because the fallback
 // metrics are matched. The CSS variables are consumed in globals.css.
+//
+// Three faces, three jobs. Be Vietnam Pro stays on body text because it was
+// drawn for Vietnamese: its diacritics sit correctly at reading sizes, which
+// most Latin-first faces only approximate. Archivo takes the display role — a
+// wide, flat-sided grotesque that gives headlines the weight of a sports front
+// page, where the previous rounded geometric read friendly and generic. And the
+// mono is promoted from an afterthought to the paper's utility voice: source
+// names, corroboration counts, kick-off times and scores all set in it, so the
+// evidence around a story reads like wire copy rather than like more prose.
 const bodyFont = Be_Vietnam_Pro({
   subsets: ["latin", "vietnamese"],
-  weight: ["400", "500", "600", "700", "800"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-body",
   display: "swap",
 });
-const displayFont = Manrope({
+const displayFont = Archivo({
   subsets: ["latin", "vietnamese"],
-  weight: ["500", "600", "700", "800"],
+  weight: ["600", "700", "800"],
   variable: "--font-display",
   display: "swap",
 });
-const monoFont = Roboto_Mono({
-  subsets: ["latin"],
+const monoFont = JetBrains_Mono({
+  subsets: ["latin", "vietnamese"],
   weight: ["400", "500", "700"],
   variable: "--font-mono",
   display: "swap",

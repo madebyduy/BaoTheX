@@ -41,3 +41,6 @@ deploy/pgdata/
 
 # Runtime logs
 logs/
+
+# TypeScript incremental build cache — machine-local, churns on every build
+*.tsbuildinfo

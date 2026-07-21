@@ -217,7 +217,7 @@ export default async function Home() {
           <section className="sports-main">
             <div className="section-heading">
               <div>
-                <span className="tag">01 · TIN NÓNG</span>
+                <span className="tag">ĐỐI CHIẾU NHIỀU NGUỒN</span>
                 <h2>Đáng chú ý trong ngày</h2>
               </div>
               <Link href="/danh-muc">Xem tất cả →</Link>
@@ -291,7 +291,7 @@ export default async function Home() {
           <section className="home-video-zone">
             <div className="section-heading">
               <div>
-                <span className="tag">02 · VIDEO</span>
+                <span className="tag">VIDEO</span>
                 <h2>Video thể thao chọn lọc</h2>
               </div>
               <Link href="/video">Xem thư viện video →</Link>
@@ -327,7 +327,7 @@ export default async function Home() {
           <section className="sports-results">
             <div className="section-heading">
               <div>
-                <span className="tag">03 · EVENT HUB</span>
+                <span className="tag">LỊCH THI ĐẤU</span>
                 <h2>Lịch & kết quả có nguồn</h2>
               </div>
               <Link href="/lich-the-thao">Xem lịch đầy đủ →</Link>
@@ -378,8 +378,8 @@ export default async function Home() {
               <Link href="/goc-nhin">Xem toàn bộ phân tích →</Link>
             </div>
             <div className="analysis-home-grid">
-              {truthAnalyses.map((item, index) => (
-                <AnalysisHomeCard item={item} index={index} key={item.id} />
+              {truthAnalyses.map((item) => (
+                <AnalysisHomeCard item={item} key={item.id} />
               ))}
             </div>
           </section>
@@ -394,7 +394,7 @@ export default async function Home() {
           <section className="sports-section">
             <div className="section-heading">
               <div>
-                <span className="tag">04 · TOÀN CẢNH</span>
+                <span className="tag">TOÀN CẢNH</span>
                 <h2>Nhiều góc nhìn thể thao</h2>
               </div>
               <Link href="/danh-muc">Khám phá chuyên mục →</Link>
@@ -409,7 +409,7 @@ export default async function Home() {
         <section className="sports-section">
           <div className="section-heading">
             <div>
-              <span className="tag">05 · THEO DÕI</span>
+              <span className="tag">THEO DÕI</span>
               <h2>Các mảng thể thao</h2>
             </div>
           </div>
@@ -585,7 +585,10 @@ function MosaicCard({ item }: { item: Item }) {
     </Link>
   );
 }
-function AnalysisHomeCard({ item, index }: { item: Item; index: number }) {
+// The ghosted 01 / 02 numeral that used to sit here was removed: these analyses
+// are independent pieces ranked by heat, not steps in a sequence, so numbering
+// them dressed decoration up as structure and told the reader nothing.
+function AnalysisHomeCard({ item }: { item: Item }) {
   return (
     <Link className="analysis-home-card" href={`/noi-dung/${item.id}`}>
       <div className="analysis-home-topline">
@@ -593,7 +596,6 @@ function AnalysisHomeCard({ item, index }: { item: Item; index: number }) {
         <time>{shortDate(item.published_at)}</time>
       </div>
       <div className="analysis-home-copy">
-        <span className="analysis-home-index">{String(index + 1).padStart(2, "0")}</span>
         <StorySignals item={item} />
         <h3>{item.title}</h3>
         <p>{item.summary || item.excerpt || "Đọc góc nhìn tổng hợp từ nhiều nguồn tin."}</p>
@@ -636,22 +638,50 @@ function NewsRow({ item, compact = false }: { item: Item; compact?: boolean }) {
     </Link>
   );
 }
+// The corroboration mark — the one device this paper should be remembered by.
+//
+// It answers, inside the width of a line, the question every other sports site
+// leaves unanswered: how many independent outlets stand behind this? The data
+// has always been there (cluster_source_count runs from 1 to 17 in a normal
+// day's feed, verification_status is rumor / verifying / confirmed) but the old
+// design spent it on three interchangeable pills, so a story seventeen papers
+// agreed on looked identical to one paper's rumour.
+//
+// It is drawn as a fixed six-slot track rather than one stroke per source. A
+// stroke-per-source row looked like a stray tick on the single-source stories
+// that make up most of a feed, and its width changed from card to card so the
+// eye could not compare two headlines without reading them. A constant track
+// fixes both: every mark occupies the same space, one filled slot against five
+// empty ones reads immediately as thin evidence, and a full track reads as
+// settled. Six is the ceiling because corroboration stops meaning more past
+// roughly half a dozen independent outlets — the count beside it carries the
+// exact figure for the stories that go higher.
+//
+// The mark answers one question — how well sourced is this — and deliberately
+// does not also report source quality; that was a second claim crowding the
+// first. The bars are decorative over the text beside them, so they are hidden
+// from assistive tech rather than announced twice.
+const CORROBORATION_SLOTS = 6;
+
 function StorySignals({ item, compact = false }: { item: Item; compact?: boolean }) {
   const status = item.verification_status || "rumor";
+  const sources = Math.max(item.cluster_source_count || 1, 1);
+  const filled = Math.min(sources, CORROBORATION_SLOTS);
   const labels = {
-    rumor: "Tin đồn",
-    verifying: "Đang xác minh",
-    confirmed: "Đã xác nhận",
+    rumor: "chưa đối chiếu",
+    verifying: "đang xác minh",
+    confirmed: "đã xác nhận",
   } as const;
   return (
-    <div className={`story-signals ${compact ? "compact" : ""}`}>
-      {(item.cluster_source_count || 0) > 1 ? (
-        <span className="signal multi-source">{item.cluster_source_count} nguồn</span>
-      ) : null}
-      <span className={`signal ${status}`}>{labels[status]}</span>
-      {(item.source_quality || 0) >= 4 ? (
-        <span className="signal trusted">Nguồn uy tín</span>
-      ) : null}
+    <div className={`corroboration ${status} ${compact ? "compact" : ""}`}>
+      <span className="corroboration-track" aria-hidden="true">
+        {Array.from({ length: CORROBORATION_SLOTS }, (_, i) => (
+          <i className={i < filled ? "on" : ""} key={i} />
+        ))}
+      </span>
+      <span className="corroboration-text">
+        {sources} nguồn · {labels[status]}
+      </span>
     </div>
   );
 }

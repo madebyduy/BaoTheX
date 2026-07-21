@@ -69,6 +69,19 @@ const (
 	// constant bitrate makes duration a clean function of byte length.
 	edgeAudioFormat = "audio-24khz-48kbitrate-mono-mp3"
 	edgeBitrate     = 48000 // bits per second, for duration estimation
+
+	// edgeChunkRunes is deliberately smaller than the Gemini path's 1,800. Edge
+	// streams the audio as it synthesises, so the wall-clock cost of a request
+	// tracks the *spoken length* of the text, not its byte count: 1,800
+	// characters is over two minutes of speech and the socket ran past the read
+	// deadline mid-brief. Around 900 keeps each request to roughly a minute of
+	// audio, which returns comfortably inside the timeout below.
+	edgeChunkRunes = 900
+
+	// edgeChunkTimeout bounds one request. It is generous relative to the chunk
+	// size on purpose — a slow link should stretch, not fail, and a genuinely
+	// wedged socket still gets cut off rather than hanging the whole edition.
+	edgeChunkTimeout = 90 * time.Second
 )
 
 // Render narrates transcript to a single MP3 at outputPath and returns its
@@ -86,7 +99,7 @@ func (e *EdgeTTS) Render(ctx context.Context, transcript, outputPath string) (in
 	if strings.TrimSpace(text) == "" {
 		return 0, fmt.Errorf("edge tts: empty transcript")
 	}
-	chunks := splitTranscript(text, speechChunkRunes)
+	chunks := splitTranscript(text, edgeChunkRunes)
 
 	var audio []byte
 	for _, chunk := range chunks {
@@ -116,7 +129,7 @@ func (e *EdgeTTS) Render(ctx context.Context, transcript, outputPath string) (in
 // mid-brief failure is retryable in isolation and a stuck socket cannot wedge
 // the whole edition. The chunks are short and there are only a handful.
 func (e *EdgeTTS) synthesize(ctx context.Context, text string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, edgeChunkTimeout)
 	defer cancel()
 
 	// ConnectionId is required on the socket URL even though the voices REST

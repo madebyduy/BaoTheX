@@ -21,13 +21,27 @@ type MediaTarget struct {
 }
 
 // contentCols is the base column set (optionally joined with source name as source_name).
-const contentCols = `c.id, c.source_id, c.type, c.status, COALESCE(c.translated_title, c.title), c.canonical_url, c.url_hash,
+// contentBaseCols is every column that comes straight off content_items. It is
+// split out from contentCols so callers whose rows are not ordinary articles —
+// the analysis desk, whose drafts belong to no story cluster — can supply their
+// own corroboration trio without restating this list and letting the two drift
+// out of step with scanContent.
+const contentBaseCols = `c.id, c.source_id, c.type, c.status, COALESCE(c.translated_title, c.title), c.canonical_url, c.url_hash,
 	c.title_hash, c.image_url, c.excerpt, c.summary, c.key_points, c.language, c.published_at,
-	c.discovered_at, c.base_score, c.editorial_boost, c.final_score, c.view_count, c.save_count, c.updated_at,
-	(SELECT sci.cluster_id FROM story_cluster_items sci WHERE sci.content_id=c.id LIMIT 1),
+	c.discovered_at, c.base_score, c.editorial_boost, c.final_score, c.view_count, c.save_count, c.updated_at`
+
+// contentClusterCols derives cluster id, corroborating source count and
+// verification state from the item's own membership of a story cluster. Scan
+// order must stay: cluster id, source count, verification status.
+const contentClusterCols = `(SELECT sci.cluster_id FROM story_cluster_items sci WHERE sci.content_id=c.id LIMIT 1),
 	COALESCE((SELECT sc.source_count FROM story_cluster_items sci JOIN story_clusters sc ON sc.id=sci.cluster_id WHERE sci.content_id=c.id LIMIT 1),1),
-	COALESCE((SELECT sc.verification_status FROM story_cluster_items sci JOIN story_clusters sc ON sc.id=sci.cluster_id WHERE sci.content_id=c.id LIMIT 1),'rumor'),
-	(SELECT quality FROM sources sq WHERE sq.id=c.source_id)`
+	COALESCE((SELECT sc.verification_status FROM story_cluster_items sci JOIN story_clusters sc ON sc.id=sci.cluster_id WHERE sci.content_id=c.id LIMIT 1),'rumor')`
+
+const contentSourceQualityCol = `(SELECT quality FROM sources sq WHERE sq.id=c.source_id)`
+
+const contentCols = contentBaseCols + `,
+	` + contentClusterCols + `,
+	` + contentSourceQualityCol
 
 func scanContent(row pgx.Row) (*domain.ContentItem, error) {
 	var c domain.ContentItem

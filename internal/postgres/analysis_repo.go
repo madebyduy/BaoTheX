@@ -255,12 +255,30 @@ func collectCandidates(rows pgx.Rows) ([]domain.AnalysisCandidate, error) {
 	return result, rows.Err()
 }
 
+// ListCandidates returns the analysis desk's queue.
+//
+// Anything awaiting a human decision sorts first, ahead of heat score. That
+// ordering is the whole point of the list and it used to be missing: the desk
+// fetches this endpoint unfiltered and picks out the drafts client-side, so with
+// a pure score ordering and a limit of thirty, eighty-odd 'proposed' candidates
+// filled the response and pushed the finished drafts out of it. The desk then
+// reported "no drafts waiting" while two sat in the database — the one number an
+// editor actually opens the page for, wrong, because the queue was sorted by
+// what was hottest rather than by what needed answering.
 func (r *AnalysisRepo) ListCandidates(ctx context.Context, status string, limit int) ([]domain.AnalysisCandidate, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
 	rows, err := r.db.Pool.Query(ctx, candidateSelect+`
-		WHERE ($1='' OR ac.status=$1) ORDER BY ac.score DESC,ac.updated_at DESC LIMIT $2`, status, limit)
+		WHERE ($1='' OR ac.status=$1)
+		ORDER BY CASE ac.status
+		           WHEN 'needs_review' THEN 0
+		           WHEN 'drafting' THEN 1
+		           WHEN 'failed' THEN 2
+		           ELSE 3
+		         END,
+		         ac.score DESC, ac.updated_at DESC
+		LIMIT $2`, status, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -274,9 +292,11 @@ func (r *AnalysisRepo) GetMaterials(ctx context.Context, clusterID int64) ([]dom
 		 COALESCE(c.summary,''),c.key_points,
 		 COALESCE(NULLIF(b.vietnamese_body,''),CASE WHEN c.language='vi' THEN b.original_body END,'')
 		FROM story_cluster_items sci
-		// A human can explicitly send a newly ingested item from the review queue
-		// to the desk. Keep it in the source packet, but never include failed or
-		// hidden content.
+		-- A human can explicitly send a newly ingested item from the review queue
+		-- to the desk. Keep it in the source packet, but never include failed or
+		-- hidden content.
+		-- (SQL comments start with --; a // here is a syntax error that killed
+		-- every cluster analysis job before it could read its own sources.)
 		JOIN content_items c ON c.id=sci.content_id AND c.status IN ('ready','needs_review')
 		JOIN sources s ON s.id=c.source_id
 		LEFT JOIN content_bodies b ON b.content_id=c.id
@@ -565,8 +585,22 @@ func (r *AnalysisRepo) Publish(ctx context.Context, clusterID int64) (int64, err
 	return contentID, err
 }
 
+// Published lists the analyses readers can see.
+//
+// The corroboration trio is taken from the candidate rather than from
+// contentCols' usual cluster lookup. A published analysis is a freshly written
+// content_item that belongs to no story cluster of its own, so the standard
+// lookup found nothing and fell back to "1 source, unverified" — which the
+// front page then printed directly underneath the words "phân tích đa nguồn",
+// on a piece the desk only commissions when at least three outlets have covered
+// the story. The candidate row remembers the cluster the piece was drafted from,
+// and that is the number the reader is owed.
 func (r *AnalysisRepo) Published(ctx context.Context, limit int) ([]domain.ContentItem, error) {
-	rows, err := r.db.Pool.Query(ctx, `SELECT `+contentCols+`,s.name FROM analysis_candidates ac
+	rows, err := r.db.Pool.Query(ctx, `SELECT `+contentBaseCols+`,
+		ac.cluster_id,
+		GREATEST(COALESCE(ac.source_count,1),1),
+		COALESCE((SELECT sc.verification_status FROM story_clusters sc WHERE sc.id=ac.cluster_id),'verifying'),
+		`+contentSourceQualityCol+`,s.name FROM analysis_candidates ac
 		JOIN content_items c ON c.id=ac.draft_content_id
 		JOIN sources s ON s.id=c.source_id
 		WHERE ac.status='published' AND c.status='ready'
