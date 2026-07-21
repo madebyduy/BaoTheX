@@ -11,8 +11,10 @@
 package ratelimit
 
 import (
+	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -52,4 +54,33 @@ func Wait(attempt int, msg string) time.Duration {
 		wait = MaxWait
 	}
 	return wait
+}
+
+// RetryHint returns the provider's requested wait without applying MaxWait.
+func RetryHint(msg string) (time.Duration, bool) {
+	m := hintRe.FindStringSubmatch(strings.ToLower(msg))
+	if m == nil {
+		return 0, false
+	}
+	secs, err := strconv.ParseFloat(m[1], 64)
+	if err != nil || secs <= 0 {
+		return 0, false
+	}
+	return time.Duration(secs * float64(time.Second)), true
+}
+
+// ParseRetryAfter accepts both forms allowed by HTTP: seconds or an HTTP date.
+func ParseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second, true
+	}
+	when, err := http.ParseTime(value)
+	if err != nil || !when.After(now) {
+		return 0, false
+	}
+	return when.Sub(now), true
 }

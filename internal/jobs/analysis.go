@@ -2,10 +2,13 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"repwire/internal/domain"
+	"repwire/internal/process"
 )
 
 // minAnalysisMaterials is how many independently-sourced, Vietnamese-readable
@@ -26,7 +29,7 @@ func (h *Handlers) handleGenerateAnalysis(ctx context.Context, j *domain.Job) er
 		return fmt.Errorf("cluster analysis: missing cluster id")
 	}
 	fail := func(err error) error {
-		_ = h.DB.Analysis.MarkFailed(ctx, payload.ClusterID, err)
+		h.recordAnalysisFailure(ctx, j, payload.ClusterID, err)
 		return err
 	}
 	if h.Summarizer == nil || !h.Summarizer.Enabled() {
@@ -54,8 +57,23 @@ func (h *Handlers) handleGenerateAnalysis(ctx context.Context, j *domain.Job) er
 		return fail(fmt.Errorf("cluster analysis: need %d publishable sources, have %d",
 			minAnalysisMaterials, len(materials)))
 	}
-	claims, err := h.Summarizer.ExtractAnalysisClaims(ctx, materials[0].Title, materials)
+	claims, checkpointed, err := h.DB.Analysis.LoadClaimsCheckpoint(ctx, payload.ClusterID)
 	if err != nil {
+		return fail(err)
+	}
+	if !checkpointed {
+		if err := h.DB.Analysis.UpdateProgress(ctx, payload.ClusterID, "extracting_claims", 0, 0, nil); err != nil {
+			return fail(err)
+		}
+		claims, err = h.Summarizer.ExtractAnalysisClaims(ctx, materials[0].Title, materials)
+		if err != nil {
+			return fail(err)
+		}
+		if err := h.DB.Analysis.SaveClaimsCheckpoint(ctx, payload.ClusterID, *claims); err != nil {
+			return fail(err)
+		}
+	}
+	if err := h.DB.Analysis.UpdateProgress(ctx, payload.ClusterID, "writing_draft", 0, 0, nil); err != nil {
 		return fail(err)
 	}
 	draft, err := h.Summarizer.WriteClusterAnalysis(ctx, materials[0].Title, materials, *claims)
@@ -84,7 +102,10 @@ func (h *Handlers) translateClusterMaterials(ctx context.Context, clusterID int6
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
+	if err := h.DB.Analysis.UpdateProgress(ctx, clusterID, "translating", 0, len(ids), nil); err != nil {
+		return err
+	}
+	for i, id := range ids {
 		if ok, err := h.Summarizer.EditorialBudgetOK(ctx); err != nil {
 			return err
 		} else if !ok {
@@ -96,8 +117,26 @@ func (h *Handlers) translateClusterMaterials(ctx context.Context, clusterID int6
 			h.Log.Warn("cluster material translation failed",
 				"cluster", clusterID, "content", id, "err", err)
 		}
+		if err := h.DB.Analysis.UpdateProgress(ctx, clusterID, "translating", i+1, len(ids), nil); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func (h *Handlers) recordAnalysisFailure(ctx context.Context, j *domain.Job, clusterID int64, cause error) {
+	stateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if j.Attempts >= j.MaxAttempts {
+		_ = h.DB.Analysis.MarkFailed(stateCtx, clusterID, cause)
+		return
+	}
+	next := time.Now().Add(retryDelay(j.Attempts, cause))
+	stage := "retrying"
+	if errors.Is(cause, process.ErrDailyQuotaExceeded) {
+		stage = "waiting_quota"
+	}
+	_ = h.DB.Analysis.UpdateProgress(stateCtx, clusterID, stage, 0, 0, &next)
 }
 
 func (h *Handlers) translateOneMaterial(ctx context.Context, contentID int64) error {

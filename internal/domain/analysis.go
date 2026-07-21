@@ -20,18 +20,22 @@ type AnalysisCandidate struct {
 	HeatTerms      []string `json:"heat_terms"`
 	FollowerWeight int      `json:"follower_weight"`
 	// PickedForDate is set on the one cluster chosen as a given day's topic.
-	PickedForDate  *time.Time `json:"picked_for_date,omitempty"`
-	Status         string     `json:"status"`
-	Consensus      []string   `json:"consensus"`
-	Conflicts      []string   `json:"conflicts"`
-	UniqueClaims   []string   `json:"unique_claims"`
-	OpenQuestions  []string   `json:"open_questions"`
-	DraftContentID *int64     `json:"draft_content_id,omitempty"`
-	LastError      *string    `json:"last_error,omitempty"`
-	ProposedAt     time.Time  `json:"proposed_at"`
-	SelectedAt     *time.Time `json:"selected_at,omitempty"`
-	GeneratedAt    *time.Time `json:"generated_at,omitempty"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	PickedForDate   *time.Time `json:"picked_for_date,omitempty"`
+	Status          string     `json:"status"`
+	Consensus       []string   `json:"consensus"`
+	Conflicts       []string   `json:"conflicts"`
+	UniqueClaims    []string   `json:"unique_claims"`
+	OpenQuestions   []string   `json:"open_questions"`
+	DraftContentID  *int64     `json:"draft_content_id,omitempty"`
+	LastError       *string    `json:"last_error,omitempty"`
+	ProgressStage   *string    `json:"progress_stage,omitempty"`
+	ProgressCurrent int        `json:"progress_current"`
+	ProgressTotal   int        `json:"progress_total"`
+	RetryAt         *time.Time `json:"retry_at,omitempty"`
+	ProposedAt      time.Time  `json:"proposed_at"`
+	SelectedAt      *time.Time `json:"selected_at,omitempty"`
+	GeneratedAt     *time.Time `json:"generated_at,omitempty"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // HotTopicCluster is a day's contender, carrying the free structural signals

@@ -29,10 +29,17 @@ type Handlers struct {
 	PMC     *ingest.EuropePMCFetcher
 	Podcast *ingest.PodcastFetcher
 
-	Summarizer    *process.Summarizer
-	Telegram      *telegram.Client
-	Digest        *telegram.Digest
-	TTS           *briefmedia.TTS
+	Summarizer *process.Summarizer
+	Telegram   *telegram.Client
+	Digest     *telegram.Digest
+	// TTS is the Gemini narrator, kept as a fallback for the quota-free Edge one.
+	TTS *briefmedia.TTS
+	// Edge is the primary narrator: Microsoft's free read-aloud endpoint, tried
+	// before TTS so the audio brief stops leaning on the limited Gemini quota.
+	Edge *briefmedia.EdgeTTS
+	// Google is the middle narrator: Google Translate's free voice, which works
+	// from IPs where Edge's endpoint is blocked. Tried after Edge, before Gemini.
+	Google        *briefmedia.GoogleTTS
 	MediaDir      string
 	PublicBaseURL string
 
@@ -48,17 +55,17 @@ type Handlers struct {
 // Register returns the kind→handler map for the worker.
 func (h *Handlers) Register() map[string]HandlerFunc {
 	return map[string]HandlerFunc{
-		domain.JobFetchRSS:         h.handleFetch,
-		domain.JobFetchYouTube:     h.handleFetch,
-		domain.JobFetchPMC:         h.handleFetch,
-		domain.JobFetchPodcast:     h.handleFetch,
-		domain.JobProcessContent:   h.handleProcess,
-		domain.JobSummarize:        h.handleSummarize,
-		domain.JobTranslate:        h.handleTranslate,
-		domain.JobScore:            h.handleScore,
-		domain.JobSendDaily:        h.handleSendDaily,
-		domain.JobFollowAlert:      h.handleFollowAlert,
-		domain.JobGenerateAudio:    h.handleGenerateAudio,
+		domain.JobFetchRSS:            h.handleFetch,
+		domain.JobFetchYouTube:        h.handleFetch,
+		domain.JobFetchPMC:            h.handleFetch,
+		domain.JobFetchPodcast:        h.handleFetch,
+		domain.JobProcessContent:      h.handleProcess,
+		domain.JobSummarize:           h.handleSummarize,
+		domain.JobTranslate:           h.handleTranslate,
+		domain.JobScore:               h.handleScore,
+		domain.JobSendDaily:           h.handleSendDaily,
+		domain.JobFollowAlert:         h.handleFollowAlert,
+		domain.JobGenerateAudio:       h.handleGenerateAudio,
 		domain.JobGenerateAnalysis:    h.handleGenerateAnalysis,
 		domain.JobGeneratePerspective: h.handleGeneratePerspective,
 		domain.JobSendPremiumBrief:    h.handleSendPremiumBrief,

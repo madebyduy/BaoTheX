@@ -23,7 +23,7 @@ func (h *Handlers) handleGeneratePerspective(ctx context.Context, j *domain.Job)
 	}
 	fail := func(err error) error {
 		if payload.ClusterID != 0 {
-			_ = h.DB.Analysis.MarkFailed(ctx, payload.ClusterID, err)
+			h.recordAnalysisFailure(ctx, j, payload.ClusterID, err)
 		}
 		return err
 	}
@@ -69,6 +69,9 @@ func (h *Handlers) handleGeneratePerspective(ctx context.Context, j *domain.Job)
 		return fail(fmt.Errorf("article perspective: no readable text for content %d", payload.ContentID))
 	}
 
+	if err := h.DB.Analysis.UpdateProgress(ctx, payload.ClusterID, "writing_draft", 0, 0, nil); err != nil {
+		return fail(err)
+	}
 	draft, err := h.Summarizer.WriteArticlePerspective(ctx, item.Title, item.SourceName, basis, summary)
 	if err != nil {
 		return fail(err)

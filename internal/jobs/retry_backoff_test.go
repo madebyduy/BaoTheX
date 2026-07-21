@@ -57,6 +57,13 @@ func TestBudgetStillWaitsOutTheDay(t *testing.T) {
 	}
 }
 
+func TestDailyRequestQuotaWaitsForPacificReset(t *testing.T) {
+	got := retryDelay(1, wrapped(process.ErrDailyQuotaExceeded))
+	if got <= time.Minute || got > 25*time.Hour {
+		t.Fatalf("daily quota retry = %v, want next Pacific reset", got)
+	}
+}
+
 func TestOrdinaryFailuresUseExponentialBackoff(t *testing.T) {
 	// backoff() adds up to 60s of jitter so retries from a burst of failures do
 	// not all return at once — hence a range rather than an equality. attempt=2

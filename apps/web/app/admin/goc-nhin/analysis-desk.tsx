@@ -21,6 +21,10 @@ type Candidate = {
   conflicts: string[];
   open_questions: string[];
   last_error?: string;
+  progress_stage?: string;
+  progress_current: number;
+  progress_total: number;
+  retry_at?: string;
 };
 
 // Vietnam time, which is where the newsroom day starts and ends regardless of
@@ -51,6 +55,31 @@ function statusLabel(status: string) {
       return "Viết lỗi";
     default:
       return status.replaceAll("_", " ");
+  }
+}
+
+function progressLabel(item: Candidate): string {
+  switch (item.progress_stage) {
+    case "queued":
+      return "Đang chờ worker nhận việc…";
+    case "translating":
+      return item.progress_total > 0
+        ? `Đang dịch nguồn ${item.progress_current}/${item.progress_total}`
+        : "Đang kiểm tra nguồn cần dịch…";
+    case "extracting_claims":
+      return "Đang trích xuất luận điểm và đối chiếu nguồn…";
+    case "writing_draft":
+      return "Đang viết bản nháp…";
+    case "waiting_quota":
+      return item.retry_at
+        ? `Đã hết quota ngày — tự chạy lại lúc ${new Date(item.retry_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`
+        : "Đã hết quota ngày — đang chờ kỳ reset";
+    case "retrying":
+      return item.retry_at
+        ? `Lượt trước chưa xong — tự thử lại lúc ${new Date(item.retry_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`
+        : "Lượt trước chưa xong — đang chờ thử lại";
+    default:
+      return "AI đang viết bản nháp… thẻ này sẽ tự cập nhật khi xong.";
   }
 }
 
@@ -359,7 +388,7 @@ function CandidateCard({
         {item.status === "drafting" ? (
           <div className="candidate-drafting" role="status" aria-live="polite">
             <span className="btx-spinner" aria-hidden />
-            <span>AI đang viết bản nháp… thẻ này sẽ tự cập nhật khi xong.</span>
+            <span>{progressLabel(item)}</span>
           </div>
         ) : null}
         {/* A draft exists → the headline opens it. Editors kept saying they

@@ -44,6 +44,17 @@ type Config struct {
 	TTSAPIKeys []string // dedicated audio-brief key pool (falls back to LLM keys)
 	TTSModel   string
 	TTSVoice   string
+	// TTSEdgeVoice selects Microsoft Edge's free read-aloud voice, tried before
+	// Gemini so the audio brief does not burn quota. Empty disables Edge and
+	// leaves Gemini as the only narrator. Defaults to a Vietnamese voice.
+	TTSEdgeVoice string
+	// TTSGoogleLang is the language for Google Translate's free voice, the
+	// fallback tried when Edge's endpoint is IP-blocked. Empty disables it.
+	TTSGoogleLang string
+	// TTSEdgeProxy routes Edge's connection through an HTTP(S) or SOCKS5 proxy to
+	// get around the endpoint's IP block. Empty is a direct connection; a
+	// system-wide VPN needs nothing here.
+	TTSEdgeProxy string
 	// TTSMaxCallsPerMinute paces narration requests. It is separate from
 	// LLMMaxCallsPerMinute because TTS_API_KEY is its own key pool with its own
 	// quota: making the two share a pacer would have the audio brief queueing
@@ -95,6 +106,10 @@ type Config struct {
 	// Applies to the LLM key pool only; see TTSMaxCallsPerMinute for narration.
 	// Zero disables pacing, which suits a paid tier with headroom.
 	LLMMaxCallsPerMinute int
+	// LLMMaxCallsPerDay mirrors the provider project's RPD quota. Background
+	// work stops at the non-reserved share; editorial work may use the reserve.
+	LLMMaxCallsPerDay          int
+	LLMEditorialReservePercent int
 
 	// Editorial
 	// EditorialStartHour is the hour (Vietnam time) from which the desk may
@@ -157,33 +172,41 @@ func Load() (*Config, error) {
 		TTSAPIKeys:            ttsKeys,
 		TTSModel:              env("TTS_MODEL", "gemini-2.5-flash-preview-tts"),
 		TTSVoice:              env("TTS_VOICE", "Erinome"),
-		TTSMaxCallsPerMinute:  envInt("TTS_MAX_CALLS_PER_MINUTE", 3),
-		MediaStorageDir:       env("MEDIA_STORAGE_DIR", "./var/media"),
-		MediaPublicBaseURL:    env("MEDIA_PUBLIC_BASE_URL", env("PUBLIC_BASE_URL", "http://localhost:3000")),
-		WebPushPublicKey:      env("WEB_PUSH_PUBLIC_KEY", ""),
-		WebPushPrivateKey:     env("WEB_PUSH_PRIVATE_KEY", ""),
-		WebPushSubject:        env("WEB_PUSH_SUBJECT", "mailto:admin@example.com"),
-		SePayMerchant:         env("SEPAY_MERCHANT", ""),
-		SePaySecretKey:        env("SEPAY_SECRET_KEY", ""),
-		SePayBaseURL:          env("SEPAY_BASE_URL", "https://pay.sepay.vn"),
-		SePayIPNSecretKey:     env("SEPAY_IPN_SECRET_KEY", ""),
-		PremiumMonthlyPrice:   envInt("PREMIUM_MONTHLY_PRICE", 39000),
-		LLMAPIKey:             firstLLMKey,
-		LLMAPIKeys:            llmKeys,
-		LLMBaseURL:            env("LLM_BASE_URL", "https://api.anthropic.com/v1/messages"),
-		LLMModel:              env("LLM_MODEL", "claude-haiku-4-5-20251001"),
-		LLMInputUSDPerMTok:    envFloat("LLM_INPUT_USD_PER_MTOK", 1),
-		LLMOutputUSDPerMTok:   envFloat("LLM_OUTPUT_USD_PER_MTOK", 5),
-		LLMDailyBudgetUSD:     envFloat("LLM_DAILY_BUDGET_USD", 5),
-		LLMScoreThreshold:     envFloat("LLM_SCORE_THRESHOLD", 25),
-		LLMTranslateMinScore:  envFloat("LLM_TRANSLATE_MIN_SCORE", 30),
-		LLMTranslateMaxAge:    time.Duration(envInt("LLM_TRANSLATE_MAX_AGE_HOURS", 36)) * time.Hour,
-		LLMMaxCallsPerHour:    envInt("LLM_MAX_CALLS_PER_HOUR", 120),
-		LLMMaxCallsPerMinute:  envInt("LLM_MAX_CALLS_PER_MINUTE", 4),
-		EditorialStartHour:    envInt("EDITORIAL_START_HOUR", 9),
-		EditorialPicksPerDay:  envInt("EDITORIAL_PICKS_PER_DAY", 3),
-		LogFormat:             env("LOG_FORMAT", "json"),
-		LogLevel:              env("LOG_LEVEL", "info"),
+		TTSEdgeVoice:          env("TTS_EDGE_VOICE", "vi-VN-NamMinhNeural"),
+		// Off by default: the Google Translate voice is flat and robotic, so the
+		// chain prefers Edge, then Gemini (both neural). Set TTS_GOOGLE_LANG=vi to
+		// re-enable it as a last resort when both of those are unavailable.
+		TTSGoogleLang:              env("TTS_GOOGLE_LANG", ""),
+		TTSEdgeProxy:               env("TTS_EDGE_PROXY", ""),
+		TTSMaxCallsPerMinute:       envInt("TTS_MAX_CALLS_PER_MINUTE", 3),
+		MediaStorageDir:            env("MEDIA_STORAGE_DIR", "./var/media"),
+		MediaPublicBaseURL:         env("MEDIA_PUBLIC_BASE_URL", env("PUBLIC_BASE_URL", "http://localhost:3000")),
+		WebPushPublicKey:           env("WEB_PUSH_PUBLIC_KEY", ""),
+		WebPushPrivateKey:          env("WEB_PUSH_PRIVATE_KEY", ""),
+		WebPushSubject:             env("WEB_PUSH_SUBJECT", "mailto:admin@example.com"),
+		SePayMerchant:              env("SEPAY_MERCHANT", ""),
+		SePaySecretKey:             env("SEPAY_SECRET_KEY", ""),
+		SePayBaseURL:               env("SEPAY_BASE_URL", "https://pay.sepay.vn"),
+		SePayIPNSecretKey:          env("SEPAY_IPN_SECRET_KEY", ""),
+		PremiumMonthlyPrice:        envInt("PREMIUM_MONTHLY_PRICE", 39000),
+		LLMAPIKey:                  firstLLMKey,
+		LLMAPIKeys:                 llmKeys,
+		LLMBaseURL:                 env("LLM_BASE_URL", "https://api.anthropic.com/v1/messages"),
+		LLMModel:                   env("LLM_MODEL", "claude-haiku-4-5-20251001"),
+		LLMInputUSDPerMTok:         envFloat("LLM_INPUT_USD_PER_MTOK", 1),
+		LLMOutputUSDPerMTok:        envFloat("LLM_OUTPUT_USD_PER_MTOK", 5),
+		LLMDailyBudgetUSD:          envFloat("LLM_DAILY_BUDGET_USD", 5),
+		LLMScoreThreshold:          envFloat("LLM_SCORE_THRESHOLD", 25),
+		LLMTranslateMinScore:       envFloat("LLM_TRANSLATE_MIN_SCORE", 30),
+		LLMTranslateMaxAge:         time.Duration(envInt("LLM_TRANSLATE_MAX_AGE_HOURS", 36)) * time.Hour,
+		LLMMaxCallsPerHour:         envInt("LLM_MAX_CALLS_PER_HOUR", 120),
+		LLMMaxCallsPerMinute:       envInt("LLM_MAX_CALLS_PER_MINUTE", 4),
+		LLMMaxCallsPerDay:          envInt("LLM_MAX_CALLS_PER_DAY", 1000),
+		LLMEditorialReservePercent: envInt("LLM_EDITORIAL_RESERVE_PERCENT", 30),
+		EditorialStartHour:         envInt("EDITORIAL_START_HOUR", 9),
+		EditorialPicksPerDay:       envInt("EDITORIAL_PICKS_PER_DAY", 3),
+		LogFormat:                  env("LOG_FORMAT", "json"),
+		LogLevel:                   env("LOG_LEVEL", "info"),
 	}
 
 	if c.DatabaseURL == "" {
@@ -202,6 +225,12 @@ func Load() (*Config, error) {
 	}
 	if c.EditorialPicksPerDay < 1 {
 		return nil, fmt.Errorf("EDITORIAL_PICKS_PER_DAY must be at least 1, got %d", c.EditorialPicksPerDay)
+	}
+	if c.LLMMaxCallsPerDay < 1 {
+		return nil, fmt.Errorf("LLM_MAX_CALLS_PER_DAY must be at least 1")
+	}
+	if c.LLMEditorialReservePercent < 0 || c.LLMEditorialReservePercent >= 100 {
+		return nil, fmt.Errorf("LLM_EDITORIAL_RESERVE_PERCENT must be between 0 and 99")
 	}
 	if c.LLMTranslateMaxAge <= 0 {
 		return nil, fmt.Errorf("LLM_TRANSLATE_MAX_AGE_HOURS must be positive, got %v", c.LLMTranslateMaxAge)

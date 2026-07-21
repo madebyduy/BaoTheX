@@ -1,6 +1,9 @@
 package postgres
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // LLMRepo tracks LLM token usage and spend for budget enforcement.
 type LLMRepo struct{ db *DB }
@@ -38,6 +41,14 @@ func (r *LLMRepo) CallsLastHour(ctx context.Context) (int, error) {
 	var total int
 	err := r.db.Pool.QueryRow(ctx,
 		`SELECT count(*) FROM llm_usage WHERE created_at >= now() - interval '1 hour' AND model LIKE '%:attempt'`).Scan(&total)
+	return total, err
+}
+
+// CallsSince counts actual provider attempts in the current provider quota day.
+func (r *LLMRepo) CallsSince(ctx context.Context, since time.Time) (int, error) {
+	var total int
+	err := r.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM llm_usage WHERE created_at >= $1 AND model LIKE '%:attempt'`, since).Scan(&total)
 	return total, err
 }
 

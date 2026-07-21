@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -35,9 +36,11 @@ type Summarizer struct {
 	// bounds the rate, and they are not the same thing.
 	pacer *ratelimit.Pacer
 
-	pricing         Pricing
-	dailyBudgetUSD  float64
-	maxCallsPerHour int
+	pricing                 Pricing
+	dailyBudgetUSD          float64
+	maxCallsPerHour         int
+	maxCallsPerDay          int
+	editorialReservePercent int
 
 	mu       sync.Mutex
 	apiKeys  []string
@@ -65,7 +68,7 @@ type Pricing struct {
 // renderer: both call the same Gemini project and therefore share one
 // per-minute allowance, so pacing them separately would let the two of them
 // stampede each other while each believed it was behaving.
-func NewSummarizer(apiKeys []string, baseURL, model string, pricing Pricing, dailyBudgetUSD float64, maxCallsPerHour int, llm *postgres.LLMRepo, pacer *ratelimit.Pacer) *Summarizer {
+func NewSummarizer(apiKeys []string, baseURL, model string, pricing Pricing, dailyBudgetUSD float64, maxCallsPerHour, maxCallsPerDay, editorialReservePercent int, llm *postgres.LLMRepo, pacer *ratelimit.Pacer) *Summarizer {
 	keys := make([]string, 0, len(apiKeys))
 	for _, k := range apiKeys {
 		if t := strings.TrimSpace(k); t != "" {
@@ -73,15 +76,17 @@ func NewSummarizer(apiKeys []string, baseURL, model string, pricing Pricing, dai
 		}
 	}
 	return &Summarizer{
-		client:          &http.Client{Timeout: 60 * time.Second},
-		apiKeys:         keys,
-		baseURL:         baseURL,
-		model:           model,
-		llm:             llm,
-		pacer:           pacer,
-		pricing:         pricing,
-		dailyBudgetUSD:  dailyBudgetUSD,
-		maxCallsPerHour: maxCallsPerHour,
+		client:                  &http.Client{Timeout: 60 * time.Second},
+		apiKeys:                 keys,
+		baseURL:                 baseURL,
+		model:                   model,
+		llm:                     llm,
+		pacer:                   pacer,
+		pricing:                 pricing,
+		dailyBudgetUSD:          dailyBudgetUSD,
+		maxCallsPerHour:         maxCallsPerHour,
+		maxCallsPerDay:          maxCallsPerDay,
+		editorialReservePercent: editorialReservePercent,
 	}
 }
 
@@ -185,6 +190,9 @@ func (s *Summarizer) BudgetOK(ctx context.Context) (bool, error) {
 // the first few seconds — went unmentioned. An error that names the wrong
 // ceiling is worse than no error: it actively misdirects.
 func (s *Summarizer) BudgetStatus(ctx context.Context) (error, error) {
+	if refusal, err := s.dailyCallStatus(ctx, false); err != nil || refusal != nil {
+		return refusal, err
+	}
 	if s.maxCallsPerHour > 0 {
 		calls, err := s.llm.CallsLastHour(ctx)
 		if err != nil {
@@ -212,6 +220,9 @@ func (s *Summarizer) BudgetStatus(ctx context.Context) (error, error) {
 // throttle. A deliberate newsroom decision answers to money, not to the queue
 // depth of background translation.
 func (s *Summarizer) editorialBudgetStatus(ctx context.Context) (error, error) {
+	if refusal, err := s.dailyCallStatus(ctx, true); err != nil || refusal != nil {
+		return refusal, err
+	}
 	if s.dailyBudgetUSD <= 0 {
 		return nil, nil
 	}
@@ -226,12 +237,40 @@ func (s *Summarizer) editorialBudgetStatus(ctx context.Context) (error, error) {
 	return nil, nil
 }
 
+func (s *Summarizer) dailyCallStatus(ctx context.Context, editorial bool) (error, error) {
+	if s.maxCallsPerDay <= 0 {
+		return nil, nil
+	}
+	start, reset := ProviderQuotaWindow(time.Now())
+	calls, err := s.llm.CallsSince(ctx, start)
+	if err != nil {
+		return nil, err
+	}
+	limit := s.maxCallsPerDay
+	label := "provider"
+	if !editorial {
+		limit = s.maxCallsPerDay * (100 - s.editorialReservePercent) / 100
+		if limit < 1 {
+			limit = 1
+		}
+		label = "background"
+	}
+	if calls >= limit {
+		return fmt.Errorf("%w: %s allowance %d/%d used; resets at %s",
+			ErrDailyQuotaExceeded, label, calls, limit, reset.Format(time.RFC3339)), nil
+	}
+	return nil, nil
+}
+
 // EditorialBudgetOK is the budget gate for editorial analysis: the hard daily
 // spend limit, without the hourly throughput cap that paces background jobs.
 func (s *Summarizer) EditorialBudgetOK(ctx context.Context) (bool, error) {
 	refusal, err := s.editorialBudgetStatus(ctx)
 	if err != nil {
 		return false, err
+	}
+	if refusal != nil {
+		return false, refusal
 	}
 	return refusal == nil, nil
 }
@@ -363,7 +402,9 @@ BẢN ĐỒ DỮ KIỆN, ĐIỂM ĐỒNG THUẬN VÀ ĐIỂM VÊNH: %s
 NGUYÊN LIỆU ĐÃ DẪN NGUỒN:
 %s`, title, string(claimJSON), clip(formatAnalysisMaterials(materials), 26000))
 	_ = prompt // Kept for backward-compatible source context; use the repaired UTF-8 prompt below.
-	raw, err := s.completeEditorial(ctx, analysisDraftPrompt(title, materials, claims), 7000)
+	// 8000 output tokens leaves headroom for the longer 1,400-2,000-word draft
+	// plus its JSON wrapper, so a full article is not truncated mid-sentence.
+	raw, err := s.completeEditorial(ctx, analysisDraftPrompt(title, materials, claims), 8000)
 	if err != nil {
 		return nil, err
 	}
@@ -409,16 +450,19 @@ BẢN CHẤT CÔNG VIỆC — ĐỌC KỸ:
 CÁCH VIẾT:
 1. Mở bài đi thẳng vào góc nhìn hoặc một quan sát đắt, không mở bằng câu tóm tắt vô thưởng vô phạt.
 2. Dùng dữ kiện trong bài (tên người, đội, tỷ số, mốc thời gian, số liệu) làm bằng chứng cho nhận định — trích đúng, không bịa, không phóng đại.
-3. Triển khai đánh giá: vì sao chuyện này quan trọng, nó nói lên điều gì, dẫn tới đâu. Có thể liên hệ bối cảnh rộng hơn nhưng không bịa sự kiện mới ngoài bài.
-4. Kết bằng một nhận định đọng lại, một hệ quả đang chờ, hoặc một câu hỏi sắc (tối đa MỘT câu hỏi, chỉ khi sự kiện thật sự có tranh cãi/lựa chọn khó).
+3. Triển khai đánh giá nhiều tầng, không dừng ở một ý: vì sao chuyện này quan trọng, nó nói lên điều gì, dẫn tới đâu. Soi từ hơn một góc (chuyên môn/chiến thuật, con người/tâm lý, tài chính/thể chế, hoặc ý nghĩa với người hâm mộ).
+4. LIÊN HỆ RỘNG: đặt sự kiện cạnh một tiền lệ, một nhân vật/đội khác, hoặc một xu thế chung để soi rõ nó — ít nhất một liên hệ như vậy. Chỉ dùng sự kiện lịch sử có thật, phổ biến; không chắc mốc/số liệu thì nói định tính ("từng nhiều lần", "những mùa gần đây"), không bịa con số hay ngày tháng.
+5. Kết bằng một nhận định đọng lại, một hệ quả đang chờ, hoặc một câu hỏi sắc (tối đa MỘT câu hỏi, chỉ khi sự kiện thật sự có tranh cãi/lựa chọn khó).
 
 GIỌNG VĂN & UY TÍN (bất di bất dịch):
 - Giọng BaoTheX: dí dỏm, duyên, am hiểu, trò chuyện với độc giả; không giật gân, không teencode, không lên lớp.
 - Tách bạch SỰ THẬT với GÓC NHÌN: nhận định/ví von/đánh giá không được viết như dữ kiện đã xác nhận. Dùng tự nhiên các cụm như "theo Góc nhìn BaoTheX", "công bằng mà nói".
 - Mọi dữ kiện thực tế bám theo bài gốc và ghi rõ nguồn là %s khi cần; KHÔNG bịa số liệu, phát ngôn, giai thoại. Không dùng từ tuyệt đối ("chắc chắn", "luôn luôn", "phải"). Không bôi nhọ đời tư/ngoại hình/dân tộc/tôn giáo. Chữ ký do hệ thống thêm sau.
 
+TIÊU ĐỀ — TRÁNH LỐI MÒN: không dùng công thức đang bị lặp ("Khi X ...", "A và canh bạc B", "X: Khi ...", "Câu chuyện của ..."). Tiêu đề phải cụ thể với đúng sự kiện này (có tên người/đội/giải), không phải câu triết lý chung lắp vào đâu cũng được. Luân phiên kiểu tiêu đề giữa các bài: một nhận định thẳng, một câu hỏi sắc, một con số gây chú ý, hoặc tên nhân vật + hành động cụ thể.
+
 Chỉ trả JSON đúng schema, không thêm chữ nào khác:
-{"title":"tiêu đề nêu rõ góc nhìn/nhận định, có duyên nhưng không giật gân","summary":"2-3 câu nêu luận điểm chính của góc nhìn","body":"bài 600-1000 từ, chia đoạn tự nhiên","key_points":["3-5 ý nhận định đáng nhớ"]}
+{"title":"tiêu đề cụ thể với sự kiện, theo TIÊU ĐỀ ở trên, không dùng công thức 'Khi...'","summary":"2-3 câu nêu luận điểm chính của góc nhìn","body":"bài 700-1100 từ, chia đoạn tự nhiên","key_points":["3-5 ý nhận định đáng nhớ"]}
 
 TÊN NGUỒN GỐC: %s
 TIÊU ĐỀ BÀI GỐC: %s
@@ -548,10 +592,16 @@ func analysisDraftPrompt(title string, materials []domain.AnalysisMaterial, clai
 	claimJSON, _ := json.Marshal(claims)
 	return fmt.Sprintf(`Bạn là cây bút của chuyên mục Góc nhìn BaoTheX. Hãy viết một bài báo tiếng Việt dài, giàu chi tiết để biên tập viên đọc và duyệt.
 
-Độ dài bắt buộc: 1.200-1.800 từ, ít nhất 9 đoạn có thông tin thực chất. Không lặp ý và không kéo dài bằng câu rỗng.
+Độ dài bắt buộc: 1.400-2.000 từ, ít nhất 10 đoạn có thông tin thực chất. Không lặp ý và không kéo dài bằng câu rỗng.
 Mở bài bằng một chi tiết đáng nhớ hoặc một câu dẫn hài hước có duyên, đi thẳng vào chuyện.
 Kể rõ diễn biến và bối cảnh: ai, làm gì, ở đâu, khi nào, điều gì mới; giải thích vì sao người hâm mộ nên quan tâm.
 Có một phần so sánh các nguồn: nguồn nào đồng thuận, nguồn nào nói khác, khác ở đâu và sự khác biệt làm thay đổi cách hiểu thế nào.
+
+CHIỀU SÂU & LIÊN HỆ (đây là phần làm nên chất lượng bài):
+- Đừng dừng ở "chuyện gì đã xảy ra". Phải soi sự kiện từ nhiều góc: chuyên môn/chiến thuật, con người/tâm lý, tài chính hoặc thể chế, và ý nghĩa văn hoá với người hâm mộ. Không cần đủ cả bốn, nhưng phải hơn một góc.
+- Đặt sự kiện vào bối cảnh RỘNG hơn chính nó: nêu ít nhất HAI liên hệ — với tiền lệ hoặc lần tương tự trước đây, với đội/nhân vật/giải đấu khác, hoặc với một xu thế chung mà sự kiện phản ánh. Liên hệ phải soi rõ sự kiện, không phải trang trí.
+- Trả lời được câu "điều này nói lên điều gì lớn hơn?" — về đội bóng, về giải đấu, về một lối chơi, một thời kỳ, hay cách môn thể thao đang thay đổi.
+- RÀO CHỐNG BỊA khi liên hệ: chỉ dùng sự kiện lịch sử có thật và phổ biến. Nếu không chắc mốc thời gian hay con số cụ thể, hãy nói theo hướng định tính ("đã nhiều lần", "trong những mùa gần đây") thay vì bịa số liệu, tỷ số hay ngày tháng chính xác. Liên hệ là lập luận của người viết, không phải dữ kiện mới được dựng lên.
 	Đưa ít nhất 3 và nhiều nhất 5 nhận định độc quyền của BaoTheX xen kẽ trong bài; mỗi nhận định là một đoạn ngắn, mở bằng “Góc nhìn BaoTheX:” và làm rõ ý nghĩa, hệ quả hoặc nghịch lý của dữ kiện vừa nêu. Nhận định không được là bản tóm tắt lại tin, không được tự tạo số liệu, động cơ, phát ngôn hoặc kết quả chưa có trong hồ sơ.
 	Giọng BaoTheX thoải mái, sáng rõ, có nét hóm hỉnh của người xem thể thao kỹ tính nhưng không lên lớp. Ưu tiên hình ảnh ví von cụ thể, gọn và đúng bối cảnh trận đấu; có thể châm biếm nhẹ một nghịch lý thể thao, nhưng câu đùa chỉ để soi rõ dữ kiện, không chế nhạo cá nhân, không xúc phạm, không bịa phát ngôn và không biến bài thành tấu hài. Tránh tiếng lóng gượng ép, câu cửa miệng và lối “giật tít”.
 	Mỗi nhận định BaoTheX phải đi theo công thức: dữ kiện đã dẫn nguồn → lý giải hợp lý → kết luận có mức độ. Khi phản biện một nhận định phổ biến, phải nêu rõ lập luận đối lập dựa trên nguồn nào, dữ kiện nào ủng hộ hoặc làm yếu nó, rồi mới đưa kết luận có mức độ. Không phản biện bằng cảm tính, mỉa mai hoặc kết luận tuyệt đối.
@@ -564,8 +614,13 @@ QUY TẮC NGUỒN:
 - Tách dữ kiện với nhận xét. Nếu chưa chắc, phải nói rõ là chưa được xác nhận.
 - Không suy đoán thành sự thật, không phóng đại, không sao chép nguyên văn dài.
 
+TIÊU ĐỀ — TRÁNH LỐI MÒN (quan trọng):
+- TUYỆT ĐỐI không dùng các công thức đang bị lặp ở mọi bài: "Khi X ...", "A và canh bạc B", "X: Khi ...", "Câu chuyện của ...", "X và bài toán Y". Những khuôn này đã nhàm.
+- Không đặt tiêu đề triết lý chung chung có thể lắp vào bài nào cũng được. Tiêu đề phải cụ thể với đúng sự kiện này — có tên người/đội/giải và điều mới thực sự xảy ra.
+- Mỗi bài chọn MỘT kiểu khác nhau, luân phiên: (a) một nhận định thẳng và cụ thể; (b) một câu hỏi sắc; (c) nêu một con số/dữ kiện gây chú ý; (d) tên nhân vật + hành động cụ thể; (e) một nghịch lý ngắn gọn. Không lần nào giống công thức lần trước.
+
 Chỉ trả JSON hợp lệ, không markdown fence:
-{"title":"tiêu đề rõ nội dung, có duyên nhưng không giật gân","summary":"3-4 câu tóm tắt giàu thông tin","body":"bài báo 1.200-1.800 từ, chia đoạn tự nhiên","key_points":["5-7 điểm đáng nhớ"]}
+{"title":"tiêu đề cụ thể với sự kiện, theo TIÊU ĐỀ ở trên, không dùng công thức 'Khi...'","summary":"3-4 câu tóm tắt giàu thông tin","body":"bài báo 1.400-2.000 từ, chia đoạn tự nhiên","key_points":["5-7 điểm đáng nhớ"]}
 
 SỰ KIỆN: %s
 BẢN ĐỒ ĐỒNG THUẬN VÀ ĐIỂM VÊNH: %s
@@ -823,10 +878,6 @@ func (s *Summarizer) completeWithBudget(ctx context.Context, prompt string, maxT
 	if refusal != nil {
 		return "", refusal
 	}
-	if err := s.llm.RecordAttempt(ctx, s.model); err != nil {
-		return "", err
-	}
-
 	var lastErr error
 	// Outer loop walks the key pool; inner loop retries one key a few times
 	// (with backoff) before we give up on it and rotate. A key is only
@@ -841,11 +892,22 @@ func (s *Summarizer) completeWithBudget(ctx context.Context, prompt string, maxT
 			if err := s.pacer.Wait(ctx); err != nil {
 				return "", err
 			}
+			if refusal, err := s.dailyCallStatus(ctx, editorial); err != nil {
+				return "", err
+			} else if refusal != nil {
+				return "", refusal
+			}
+			if err := s.llm.RecordAttempt(ctx, s.model); err != nil {
+				return "", err
+			}
 			text, policy, err := s.completeOnce(ctx, key, prompt, maxTokens)
 			if err == nil {
 				return text, nil
 			}
 			lastErr = err
+			if errors.Is(err, ErrDailyQuotaExceeded) {
+				return "", err
+			}
 			if policy == policyFatal {
 				return "", err // bad request — retrying or rotating won't help
 			}
@@ -917,7 +979,10 @@ func (s *Summarizer) completeAnthropic(ctx context.Context, key, prompt string, 
 		if out.Error != nil {
 			msg = out.Error.Message
 		}
-		return "", classify(resp.StatusCode, msg), fmt.Errorf("summarizer: %s", msg)
+		if retryAfter, ok := ratelimit.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
+			msg += fmt.Sprintf("; retry in %.3fs", retryAfter.Seconds())
+		}
+		return "", classify(resp.StatusCode, msg), providerRequestError(resp.StatusCode, msg)
 	}
 
 	// Record usage (best-effort), priced at the configured provider's rates.
@@ -992,7 +1057,10 @@ func (s *Summarizer) completeGemini(ctx context.Context, key, prompt string, max
 		if out.Error != nil {
 			msg = out.Error.Message
 		}
-		return "", classify(resp.StatusCode, msg), fmt.Errorf("gemini: %s", msg)
+		if retryAfter, ok := ratelimit.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
+			msg += fmt.Sprintf("; retry in %.3fs", retryAfter.Seconds())
+		}
+		return "", classify(resp.StatusCode, msg), providerRequestError(resp.StatusCode, msg)
 	}
 	_ = s.llm.RecordUsage(ctx, s.model, out.UsageMetadata.PromptTokenCount,
 		out.UsageMetadata.CandidatesTokenCount,

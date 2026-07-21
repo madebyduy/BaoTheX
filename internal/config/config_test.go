@@ -170,6 +170,14 @@ func TestLoadRejectsZeroEditorialPicks(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidEditorialReserve(t *testing.T) {
+	setRequired(t)
+	t.Setenv("LLM_EDITORIAL_RESERVE_PERCENT", "100")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected 100 percent reserve to be rejected")
+	}
+}
+
 func TestTTSFallsBackToLLMKeysOnlyWhenUnset(t *testing.T) {
 	setRequired(t)
 	t.Setenv("LLM_API_KEY", "llm-one,llm-two")

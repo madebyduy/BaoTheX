@@ -209,7 +209,8 @@ func (r *AnalysisRepo) ClaimDailyPick(ctx context.Context, p DailyPick, day time
 		  controversy_score=EXCLUDED.controversy_score,
 		  action_score=EXCLUDED.action_score, heat_terms=EXCLUDED.heat_terms,
 		  picked_for_date=EXCLUDED.picked_for_date, status='drafting',
-		  selected_at=now(), last_error=NULL, updated_at=now()
+		  selected_at=now(), last_error=NULL, progress_stage='queued',
+		  progress_current=0,progress_total=0,retry_at=NULL,updated_at=now()
 		WHERE analysis_candidates.status <> 'published'`,
 		clusterID, heat, in.SourceCount, in.QualitySources, in.Velocity24h,
 		in.Velocity6h, in.FollowerWeight, p.Controversy, p.Action,
@@ -232,6 +233,7 @@ const candidateSelect = `
 	 ac.controversy_score,ac.action_score,ac.heat_terms,ac.follower_weight,
 	 ac.picked_for_date,ac.status,ac.consensus,ac.conflicts,ac.unique_claims,
 	 ac.open_questions,ac.draft_content_id,ac.last_error,ac.proposed_at,
+	 ac.progress_stage,ac.progress_current,ac.progress_total,ac.retry_at,
 	 ac.selected_at,ac.generated_at,ac.updated_at
 	FROM analysis_candidates ac JOIN story_clusters sc ON sc.id=ac.cluster_id`
 
@@ -244,6 +246,7 @@ func collectCandidates(rows pgx.Rows) ([]domain.AnalysisCandidate, error) {
 			&c.ControversyScore, &c.ActionScore, &c.HeatTerms, &c.FollowerWeight,
 			&c.PickedForDate, &c.Status, &c.Consensus, &c.Conflicts, &c.UniqueClaims,
 			&c.OpenQuestions, &c.DraftContentID, &c.LastError, &c.ProposedAt,
+			&c.ProgressStage, &c.ProgressCurrent, &c.ProgressTotal, &c.RetryAt,
 			&c.SelectedAt, &c.GeneratedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -348,7 +351,8 @@ func (r *AnalysisRepo) QueueContentForAnalysis(ctx context.Context, contentID in
 			ON CONFLICT (cluster_id) DO UPDATE SET
 			 source_count=EXCLUDED.source_count,high_quality_sources=EXCLUDED.high_quality_sources,
 			 velocity_24h=EXCLUDED.velocity_24h,velocity_6h=EXCLUDED.velocity_6h,
-			 status='drafting',selected_at=now(),last_error=NULL,updated_at=now()
+			 status='drafting',selected_at=now(),last_error=NULL,progress_stage='queued',
+			 progress_current=0,progress_total=0,retry_at=NULL,updated_at=now()
 			WHERE analysis_candidates.status IN ('proposed','failed','dismissed')`,
 			clusterID, sources, highQuality, velocity24, velocity6)
 		if err != nil {
@@ -407,7 +411,8 @@ func (r *AnalysisRepo) QueueContentForPerspective(ctx context.Context, contentID
 			ON CONFLICT (cluster_id) DO UPDATE SET
 			 source_count=EXCLUDED.source_count,high_quality_sources=EXCLUDED.high_quality_sources,
 			 velocity_24h=EXCLUDED.velocity_24h,velocity_6h=EXCLUDED.velocity_6h,
-			 status='drafting',selected_at=now(),last_error=NULL,updated_at=now()
+			 status='drafting',selected_at=now(),last_error=NULL,progress_stage='queued',
+			 progress_current=0,progress_total=0,retry_at=NULL,updated_at=now()
 			WHERE analysis_candidates.status IN ('proposed','failed','dismissed')`,
 			clusterID, sources, highQuality, velocity24, velocity6)
 		if err != nil {
@@ -422,7 +427,9 @@ func (r *AnalysisRepo) QueueContentForPerspective(ctx context.Context, contentID
 }
 
 func (r *AnalysisRepo) MarkDrafting(ctx context.Context, clusterID int64) error {
-	tag, err := r.db.Pool.Exec(ctx, `UPDATE analysis_candidates SET status='drafting',selected_at=now(),last_error=NULL,updated_at=now() WHERE cluster_id=$1 AND status IN ('proposed','failed','needs_review')`, clusterID)
+	tag, err := r.db.Pool.Exec(ctx, `UPDATE analysis_candidates SET status='drafting',selected_at=now(),last_error=NULL,
+		progress_stage='queued',progress_current=0,progress_total=0,retry_at=NULL,updated_at=now()
+		WHERE cluster_id=$1 AND status IN ('proposed','failed','needs_review')`, clusterID)
 	if err != nil {
 		return err
 	}
@@ -433,8 +440,42 @@ func (r *AnalysisRepo) MarkDrafting(ctx context.Context, clusterID int64) error 
 }
 
 func (r *AnalysisRepo) MarkFailed(ctx context.Context, clusterID int64, cause error) error {
-	_, err := r.db.Pool.Exec(ctx, `UPDATE analysis_candidates SET status='failed',last_error=$2,updated_at=now() WHERE cluster_id=$1`, clusterID, cause.Error())
+	_, err := r.db.Pool.Exec(ctx, `UPDATE analysis_candidates SET status='failed',progress_stage='failed',
+		retry_at=NULL,last_error=$2,updated_at=now() WHERE cluster_id=$1`, clusterID, cause.Error())
 	return err
+}
+
+func (r *AnalysisRepo) UpdateProgress(ctx context.Context, clusterID int64, stage string, current, total int, retryAt *time.Time) error {
+	_, err := r.db.Pool.Exec(ctx, `UPDATE analysis_candidates SET progress_stage=$2,
+		progress_current=$3,progress_total=$4,retry_at=$5,updated_at=now() WHERE cluster_id=$1`,
+		clusterID, stage, current, total, retryAt)
+	return err
+}
+
+func (r *AnalysisRepo) SaveClaimsCheckpoint(ctx context.Context, clusterID int64, claims domain.AnalysisClaims) error {
+	raw, err := json.Marshal(claims)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.Pool.Exec(ctx, `UPDATE analysis_candidates SET checkpoint_claims=$2,
+		progress_stage='writing_draft',updated_at=now() WHERE cluster_id=$1`, clusterID, raw)
+	return err
+}
+
+func (r *AnalysisRepo) LoadClaimsCheckpoint(ctx context.Context, clusterID int64) (*domain.AnalysisClaims, bool, error) {
+	var raw []byte
+	err := r.db.Pool.QueryRow(ctx, `SELECT checkpoint_claims FROM analysis_candidates WHERE cluster_id=$1`, clusterID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) || len(raw) == 0 {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var claims domain.AnalysisClaims
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return nil, false, err
+	}
+	return &claims, true, nil
 }
 
 func (r *AnalysisRepo) Dismiss(ctx context.Context, clusterID int64) error {
@@ -489,7 +530,8 @@ func (r *AnalysisRepo) CreateDraft(ctx context.Context, clusterID int64, claims 
 		}
 		_, err = tx.Exec(ctx, `UPDATE analysis_candidates SET status='needs_review',consensus=$2,
 			conflicts=$3,unique_claims=$4,open_questions=$5,draft_content_id=$6,
-			generated_at=now(),last_error=NULL,updated_at=now() WHERE cluster_id=$1`,
+			generated_at=now(),last_error=NULL,progress_stage='completed',progress_current=0,
+			progress_total=0,retry_at=NULL,checkpoint_claims=NULL,updated_at=now() WHERE cluster_id=$1`,
 			clusterID, claims.Consensus, claims.Conflicts, claims.UniqueClaims, claims.OpenQuestions, contentID)
 		return err
 	})

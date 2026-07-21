@@ -27,7 +27,7 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 		edition = "morning"
 	}
 	h.Log.Info("audio generation started", "date", day.Format("2006-01-02"), "edition", edition)
-	if h.TTS == nil || !h.TTS.Enabled() {
+	if !h.hasNarrator() {
 		return fmt.Errorf("audio brief: TTS not configured")
 	}
 	candidates, _, err := h.DB.Content.List(ctx, postgres.ContentFilter{
@@ -53,19 +53,78 @@ func (h *Handlers) handleGenerateAudio(ctx context.Context, j *domain.Job) error
 	} else {
 		title, script, ids = buildMorningScript(day, items)
 	}
-	relative := filepath.ToSlash(filepath.Join("audio", day.Format("2006-01-02")+"-the-thao-"+hourLabel+".wav"))
-	output := filepath.Join(h.MediaDir, filepath.FromSlash(relative))
-	duration, err := h.TTS.Render(ctx, script, output)
+	base := filepath.Join("audio", day.Format("2006-01-02")+"-the-thao-"+hourLabel)
+	ext, duration, err := h.renderNarration(ctx, script, filepath.Join(h.MediaDir, filepath.FromSlash(base)))
 	if err != nil {
 		h.Log.Error("audio render failed", "date", day.Format("2006-01-02"), "edition", edition, "err", err)
 		return err
 	}
+	relative := filepath.ToSlash(base) + ext
 	publicURL := strings.TrimRight(h.PublicBaseURL, "/") + "/media/" + relative
 	if err := h.DB.Engagement.SaveAudioBrief(ctx, day, edition, title, script, publicURL, duration, ids); err != nil {
 		return err
 	}
 	h.Log.Info("audio generation completed", "date", day.Format("2006-01-02"), "edition", edition, "duration_seconds", duration, "stories", len(ids))
 	return nil
+}
+
+// hasNarrator reports whether at least one TTS provider is configured.
+func (h *Handlers) hasNarrator() bool {
+	return (h.Edge != nil && h.Edge.Enabled()) ||
+		(h.Google != nil && h.Google.Enabled()) ||
+		(h.TTS != nil && h.TTS.Enabled())
+}
+
+// renderNarration voices the script through a fallback chain and returns the
+// extension of the file it actually wrote (".mp3" or ".wav") so the caller can
+// build a media URL that matches the file on disk.
+//
+// The order is quality-where-available, then reach:
+//   - Edge sounds best (neural voice) but Microsoft 403s its synthesis endpoint
+//     from datacenter IPs, so it often fails on a server.
+//   - Google Translate works from anywhere for free; the voice is flatter and it
+//     is rate-limited, but it answers when Edge will not.
+//   - Gemini is the paid-quota last resort, so the brief still gets made on a day
+//     both free voices are down.
+//
+// The first provider that succeeds wins; a failure is logged and the chain moves
+// on, because an audio brief that silently stops is worse than one in a plainer
+// voice.
+func (h *Handlers) renderNarration(ctx context.Context, script, outBase string) (string, int, error) {
+	type provider struct {
+		name    string
+		ext     string
+		enabled bool
+		render  func(context.Context, string, string) (int, error)
+	}
+	var providers []provider
+	if h.Edge != nil {
+		providers = append(providers, provider{"edge", ".mp3", h.Edge.Enabled(), h.Edge.Render})
+	}
+	if h.Google != nil {
+		providers = append(providers, provider{"google", ".mp3", h.Google.Enabled(), h.Google.Render})
+	}
+	if h.TTS != nil {
+		providers = append(providers, provider{"gemini", ".wav", h.TTS.Enabled(), h.TTS.Render})
+	}
+
+	var lastErr error
+	for _, p := range providers {
+		if !p.enabled {
+			continue
+		}
+		dur, err := p.render(ctx, script, outBase+p.ext)
+		if err == nil {
+			h.Log.Info("audio narrated", "provider", p.name)
+			return p.ext, dur, nil
+		}
+		h.Log.Warn("tts provider failed, trying next", "provider", p.name, "err", err)
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("audio brief: no tts provider available")
+	}
+	return "", 0, lastErr
 }
 
 func buildEveningScript(day time.Time, items []domain.ContentItem) (string, string, []int64) {

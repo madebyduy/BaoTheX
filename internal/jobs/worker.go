@@ -161,6 +161,9 @@ const (
 // retryDelay decides when a failed job may run again, based on what refused it.
 func retryDelay(attempts int, cause error) time.Duration {
 	switch {
+	case errors.Is(cause, process.ErrDailyQuotaExceeded):
+		_, reset := process.ProviderQuotaWindow(time.Now())
+		return time.Until(reset) + time.Minute
 	case errors.Is(cause, process.ErrBudgetExceeded):
 		return budgetRetryAfter
 	case errors.Is(cause, process.ErrHourlyCapReached), errors.Is(cause, briefmedia.ErrQuotaExceeded):

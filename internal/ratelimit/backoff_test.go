@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"net/http"
 	"testing"
 	"time"
 )
@@ -17,6 +18,17 @@ func TestWaitHonoursProviderHint(t *testing.T) {
 	// failed" while the keys are healthy and the budget untouched.
 	if got := Wait(1, geminiRateLimitMsg); got < 49*time.Second {
 		t.Fatalf("Wait = %v, want at least the hinted 49s", got)
+	}
+}
+
+func TestParseRetryAfterSecondsAndDate(t *testing.T) {
+	now := time.Date(2026, 7, 21, 3, 0, 0, 0, time.UTC)
+	if got, ok := ParseRetryAfter("45", now); !ok || got != 45*time.Second {
+		t.Fatalf("seconds Retry-After = %v, %v", got, ok)
+	}
+	header := now.Add(2 * time.Minute).Format(http.TimeFormat)
+	if got, ok := ParseRetryAfter(header, now); !ok || got != 2*time.Minute {
+		t.Fatalf("date Retry-After = %v, %v", got, ok)
 	}
 }
 
