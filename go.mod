@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coder/websocket v1.8.15
-	github.com/jackc/pgx/v5 v5.7.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mmcdole/gofeed v1.4.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/net v0.56.0
