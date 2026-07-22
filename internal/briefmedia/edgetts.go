@@ -92,6 +92,10 @@ const (
 // Frameless MP3 streams join by byte append and still play as one file, so no
 // container muxing is needed.
 func (e *EdgeTTS) Render(ctx context.Context, transcript, outputPath string) (int, error) {
+	return e.render(ctx, transcript, outputPath, "+0%", edgeChunkRunes)
+}
+
+func (e *EdgeTTS) render(ctx context.Context, transcript, outputPath, rate string, chunkRunes int) (int, error) {
 	if !e.Enabled() {
 		return 0, fmt.Errorf("edge tts: no voice configured")
 	}
@@ -99,13 +103,17 @@ func (e *EdgeTTS) Render(ctx context.Context, transcript, outputPath string) (in
 	if strings.TrimSpace(text) == "" {
 		return 0, fmt.Errorf("edge tts: empty transcript")
 	}
-	chunks := splitTranscript(text, edgeChunkRunes)
+	chunks := splitTranscript(text, chunkRunes)
 
 	var audio []byte
-	for _, chunk := range chunks {
-		part, err := e.synthesize(ctx, chunk)
+	for index, chunk := range chunks {
+		part, err := e.synthesizeWithRetry(ctx, chunk, rate)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("edge tts: chunk %d: %w", index+1, err)
+		}
+		seconds := float64(len(part)*8) / edgeBitrate
+		if err := validateNarrationChunk(chunk, seconds); err != nil {
+			return 0, fmt.Errorf("edge tts: chunk %d: %w", index+1, err)
 		}
 		audio = append(audio, part...)
 	}
@@ -122,13 +130,32 @@ func (e *EdgeTTS) Render(ctx context.Context, transcript, outputPath string) (in
 	return len(audio) * 8 / edgeBitrate, nil
 }
 
+func (e *EdgeTTS) synthesizeWithRetry(ctx context.Context, text, rate string) ([]byte, error) {
+	var part []byte
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		part, err = e.synthesize(ctx, text, rate)
+		if err == nil || strings.Contains(err.Error(), "SSML is invalid") {
+			break
+		}
+		timer := time.NewTimer(time.Duration(1<<attempt) * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return part, err
+}
+
 // synthesize opens one connection, sends the config and one SSML request, and
 // returns the concatenated MP3 audio for that chunk.
 //
 // A connection per chunk is deliberate: it keeps each request independent, so a
 // mid-brief failure is retryable in isolation and a stuck socket cannot wedge
 // the whole edition. The chunks are short and there are only a handful.
-func (e *EdgeTTS) synthesize(ctx context.Context, text string) ([]byte, error) {
+func (e *EdgeTTS) synthesize(ctx context.Context, text, rate string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, edgeChunkTimeout)
 	defer cancel()
 
@@ -177,7 +204,7 @@ func (e *EdgeTTS) synthesize(ctx context.Context, text string) ([]byte, error) {
 	if err := conn.Write(ctx, websocket.MessageText, []byte(edgeConfigMessage())); err != nil {
 		return nil, fmt.Errorf("edge tts: send config: %w", err)
 	}
-	if err := conn.Write(ctx, websocket.MessageText, []byte(edgeSSMLMessage(e.voice, text))); err != nil {
+	if err := conn.Write(ctx, websocket.MessageText, []byte(edgeSSMLMessageWithRate(e.voice, text, rate))); err != nil {
 		return nil, fmt.Errorf("edge tts: send ssml: %w", err)
 	}
 
@@ -249,9 +276,14 @@ func edgeConfigMessage() string {
 }
 
 func edgeSSMLMessage(voice, text string) string {
+	return edgeSSMLMessageWithRate(voice, text, "+0%")
+}
+
+func edgeSSMLMessageWithRate(voice, text, rate string) string {
+	escaped := escapeSSML(text)
 	ssml := "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='vi-VN'>" +
 		"<voice name='" + voice + "'>" +
-		"<prosody pitch='+0Hz' rate='+0%' volume='+0%'>" + escapeSSML(text) + "</prosody>" +
+		"<prosody pitch='+0Hz' rate='" + rate + "' volume='+0%'>" + escaped + "</prosody>" +
 		"</voice></speak>"
 	return "X-RequestId:" + newRequestID() + "\r\n" +
 		"Content-Type:application/ssml+xml\r\n" +

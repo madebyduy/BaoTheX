@@ -4,6 +4,7 @@ package ingest
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"slices"
 	"strings"
@@ -38,11 +39,24 @@ var trackingParams = []string{"fbclid", "gclid", "ref", "source", "mc_cid", "mc_
 // Normalize returns a canonical form of a URL: https scheme, lowercased host
 // without www, no fragment, tracking params removed, no trailing slash.
 func Normalize(raw string) (string, error) {
-	u, err := url.Parse(strings.TrimSpace(raw))
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("empty URL")
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
 	if err != nil {
 		return "", err
 	}
-	if u.Scheme == "http" || u.Scheme == "" {
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("unsupported URL scheme %q", u.Scheme)
+	}
+	if u.Hostname() == "" || u.User != nil {
+		return "", fmt.Errorf("URL must have a public host and no credentials")
+	}
+	if u.Scheme == "http" {
 		u.Scheme = "https"
 	}
 	u.Host = strings.ToLower(strings.TrimPrefix(u.Host, "www."))

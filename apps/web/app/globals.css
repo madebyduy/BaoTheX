@@ -6194,17 +6194,130 @@ p {
   cursor: default;
 }
 
+/* Immediate navigation feedback. The shell stays in the root layout while the
+   bar advances optimistically until App Router commits the next URL. */
+.route-progress {
+  position: fixed;
+  z-index: 1000;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+}
+.route-progress span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transform: scaleX(0.06);
+  transform-origin: left center;
+  background: linear-gradient(90deg, var(--ember), #ffb199 72%, #fff0e9);
+  box-shadow: 0 0 12px rgba(255, 107, 74, 0.75);
+}
+.route-progress-loading,
+.route-progress-completing {
+  visibility: visible;
+}
+.route-progress-loading span {
+  opacity: 1;
+  animation: route-progress-grow 10s cubic-bezier(0.15, 0.72, 0.18, 1) forwards;
+}
+.route-progress-completing span {
+  opacity: 0;
+  transform: scaleX(1);
+  transition:
+    transform 160ms ease-out,
+    opacity 120ms ease 100ms;
+}
+@keyframes route-progress-grow {
+  0% {
+    transform: scaleX(0.06);
+  }
+  18% {
+    transform: scaleX(0.42);
+  }
+  55% {
+    transform: scaleX(0.7);
+  }
+  100% {
+    transform: scaleX(0.92);
+  }
+}
+
+/* Generic App Router fallback. Detail pages keep their richer article-specific
+   skeleton; this one covers login, lists and every route without a local one. */
+.global-loading {
+  min-height: 72vh;
+  padding-top: clamp(30px, 5vw, 72px);
+  padding-bottom: 72px;
+}
+.global-loading-heading {
+  max-width: 760px;
+  margin-bottom: 34px;
+}
+.global-loading-kicker {
+  width: 150px;
+  height: 13px;
+  margin-bottom: 18px;
+}
+.global-loading-title {
+  width: min(620px, 86vw);
+  height: clamp(42px, 6vw, 68px);
+  margin-bottom: 14px;
+}
+.global-loading-subtitle {
+  width: min(460px, 68vw);
+  height: 20px;
+}
+.global-loading-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(260px, 0.75fr);
+  gap: 22px;
+}
+.global-loading-lead {
+  min-height: 360px;
+}
+.global-loading-stack {
+  display: grid;
+  gap: 14px;
+}
+.global-loading-card {
+  min-height: 104px;
+}
+@media (max-width: 760px) {
+  .global-loading-grid {
+    grid-template-columns: 1fr;
+  }
+  .global-loading-lead {
+    min-height: 240px;
+  }
+  .global-loading-stack {
+    grid-template-columns: 1fr 1fr;
+  }
+  .global-loading-card:last-child {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-progress-loading span {
+    animation-duration: 20s;
+  }
+}
+
 /* ── Chuyển trang kiểu "lật trang báo" ──────────────────────────────────────
    app/template.tsx re-mounts on every navigation, so this fires each time a
-   new page arrives. The page body pivots on its left edge (rotateY) like a
-   sheet being turned, while a soft shadow sweeps off the spine. The animation
+   new page arrives. Keep the motion short: navigation progress handles the
+   waiting state, while this animation only confirms that the new page arrived.
    uses `backwards` (not `forwards`) so that once it finishes the element has NO
    residual transform — otherwise a lingering transform would break `position:
    sticky` on the article aside and side rails. */
 .page-turn {
   position: relative;
   transform-origin: left center;
-  animation: page-turn 520ms cubic-bezier(0.22, 0.61, 0.24, 1) backwards;
+  animation: page-turn 180ms cubic-bezier(0.22, 0.61, 0.24, 1) backwards;
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
@@ -6216,12 +6329,12 @@ p {
   z-index: 40;
   pointer-events: none;
   background: linear-gradient(105deg, rgba(4, 6, 10, 0.55), transparent 42%);
-  animation: page-turn-shadow 520ms ease-out backwards;
+  animation: page-turn-shadow 180ms ease-out backwards;
 }
 @keyframes page-turn {
   from {
     opacity: 0;
-    transform: perspective(2200px) rotateY(-16deg);
+    transform: perspective(2200px) rotateY(-6deg);
   }
   to {
     opacity: 1;
@@ -6242,7 +6355,7 @@ p {
 @media (prefers-reduced-motion: reduce) {
   .page-turn {
     transform: none;
-    animation: page-fade 240ms ease backwards;
+    animation: page-fade 120ms ease backwards;
   }
   .page-turn::before {
     display: none;

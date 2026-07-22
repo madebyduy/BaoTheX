@@ -107,6 +107,9 @@ func (t *TTS) Render(ctx context.Context, transcript, outputPath string) (int, e
 		if err != nil {
 			return 0, err
 		}
+		if err := validateNarrationChunk(chunk, float64(len(part))/(sampleRate*2)); err != nil {
+			return 0, fmt.Errorf("tts: chunk %d: %w", index+1, err)
+		}
 		if index > 0 {
 			pcm = append(pcm, make([]byte, sampleRate*2*90/1000)...)
 		}
@@ -263,7 +266,16 @@ var speechTags = regexp.MustCompile(`<[^>]+>`)
 var speechSentence = regexp.MustCompile(`[^.!?]+(?:[.!?]+|$)`)
 
 func normalizeSpeechText(text string) string {
-	text = html.UnescapeString(text)
+	// Some publishers double-encode entities (for example &amp;apos;). Decode a
+	// bounded number of times so the narrator says the punctuation instead of
+	// reading "amp apos" aloud, without turning this into an unbounded loop.
+	for range 2 {
+		decoded := html.UnescapeString(text)
+		if decoded == text {
+			break
+		}
+		text = decoded
+	}
 	text = speechTags.ReplaceAllString(text, " ")
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	replacer := strings.NewReplacer(
@@ -372,6 +384,22 @@ func splitSpeechWords(text string, max int) []string {
 		chunks = append(chunks, strings.Join(current, " "))
 	}
 	return chunks
+}
+
+// validateNarrationChunk catches providers that return success after speaking
+// only the beginning of a long chunk. News narration is normally around
+// 2.5-3.5 words/second; 4.5 is deliberately permissive so only clearly
+// truncated audio is rejected and the fallback provider can retry.
+func validateNarrationChunk(text string, seconds float64) error {
+	words := len(strings.Fields(text))
+	if words < 20 {
+		return nil
+	}
+	minimum := float64(words) / 4.5
+	if seconds+0.5 < minimum {
+		return fmt.Errorf("audio appears truncated: %.1fs for %d words (minimum %.1fs)", seconds, words, minimum)
+	}
+	return nil
 }
 
 func writeWAV(path string, pcm []byte) error {

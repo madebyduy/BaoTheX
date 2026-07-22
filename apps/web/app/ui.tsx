@@ -49,7 +49,7 @@ export function SiteHeader() {
         <Link className="premium-link" href="/premium">
           Premium
         </Link>
-        <AccountNav path={path} />
+        <AccountNav />
       </div>
       <div className="ticker">
         <div className="wrap">
@@ -134,28 +134,33 @@ function SearchBox() {
   );
 }
 
-function AccountNav({ path }: { path: string }) {
+function AccountNav() {
   const [user, setUser] = useState<HeaderUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    fetch(`${API}/api/v1/auth/me`, { credentials: "include", cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : Promise.reject()))
-      .then((json) => {
-        if (!cancelled) setUser(json.data ?? json);
-      })
-      .catch(() => {
-        if (!cancelled) setUser(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    function loadUser() {
+      setLoading(true);
+      fetch(`${API}/api/v1/auth/me`, { credentials: "include", cache: "no-store" })
+        .then((response) => (response.ok ? response.json() : Promise.reject()))
+        .then((json) => {
+          if (!cancelled) setUser(json.data ?? json);
+        })
+        .catch(() => {
+          if (!cancelled) setUser(null);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }
+    loadUser();
+    window.addEventListener("baothex:auth-changed", loadUser);
     return () => {
       cancelled = true;
+      window.removeEventListener("baothex:auth-changed", loadUser);
     };
-  }, [path]);
+  }, []);
 
   async function logout() {
     await fetch(`${API}/api/v1/auth/logout`, {

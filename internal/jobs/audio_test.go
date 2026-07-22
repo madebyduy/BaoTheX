@@ -65,3 +65,34 @@ func TestSelectMorningStoriesOnlyAllowsVietnameseReadyArticles(t *testing.T) {
 		t.Fatalf("unexpected selected ids: %d, %d", selected[0].ID, selected[1].ID)
 	}
 }
+
+func TestAudioScriptDoesNotCutOrRepeatStory(t *testing.T) {
+	summary := "Câu thứ nhất cung cấp bối cảnh đầy đủ cho người nghe. " +
+		"Câu thứ hai giải thích diễn biến chính của trận đấu. " +
+		strings.Repeat("Phần cuối chưa hoàn tất ", 90)
+	repeatedPoint := "Câu thứ hai giải thích diễn biến chính của trận đấu."
+	items := []domain.ContentItem{{
+		ID: 1, Title: "Một tin thể thao", SourceName: "Nguồn A", Summary: &summary,
+		KeyPoints: []string{repeatedPoint},
+	}}
+
+	_, script, _ := buildMorningScript(time.Date(2026, 7, 22, 6, 0, 0, 0, time.Local), items)
+	if strings.Contains(script, "…") {
+		t.Fatalf("audio script still contains an abrupt ellipsis: %s", script)
+	}
+	if got := strings.Count(script, repeatedPoint); got != 1 {
+		t.Fatalf("duplicate key point was narrated %d times", got)
+	}
+	if strings.Contains(script, "Phần cuối chưa hoàn tất") {
+		t.Fatalf("incomplete trailing sentence should have been omitted: %s", script)
+	}
+}
+
+func TestClipSpeechPrefersCompleteSentence(t *testing.T) {
+	text := strings.Repeat("Một câu hoàn chỉnh có nội dung rõ ràng. ", 8) +
+		strings.Repeat("Đoạn dở dang ", 30)
+	got := clipSpeech(text, 55)
+	if !strings.HasSuffix(got, ".") || strings.Contains(got, "Đoạn dở dang") {
+		t.Fatalf("clipSpeech cut a spoken sentence incorrectly: %q", got)
+	}
+}

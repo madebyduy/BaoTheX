@@ -53,6 +53,9 @@ export type Item = {
   cluster_source_count?: number;
   verification_status?: "rumor" | "verifying" | "confirmed";
   source_quality?: number;
+  quality_state?: "pending" | "passed" | "review";
+  quality_flags?: string[];
+  quality_checked_at?: string;
 };
 export type StoryCluster = {
   id: number;

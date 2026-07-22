@@ -28,7 +28,8 @@ type MediaTarget struct {
 // out of step with scanContent.
 const contentBaseCols = `c.id, c.source_id, c.type, c.status, COALESCE(c.translated_title, c.title), c.canonical_url, c.url_hash,
 	c.title_hash, c.image_url, c.excerpt, c.summary, c.key_points, c.language, c.published_at,
-	c.discovered_at, c.base_score, c.editorial_boost, c.final_score, c.view_count, c.save_count, c.updated_at`
+	c.discovered_at, c.base_score, c.editorial_boost, c.final_score, c.view_count, c.save_count, c.updated_at,
+	c.quality_state, c.quality_flags, c.quality_checked_at`
 
 // contentClusterCols derives cluster id, corroborating source count and
 // verification state from the item's own membership of a story cluster. Scan
@@ -48,7 +49,8 @@ func scanContent(row pgx.Row) (*domain.ContentItem, error) {
 	if err := row.Scan(&c.ID, &c.SourceID, &c.Type, &c.Status, &c.Title, &c.CanonicalURL,
 		&c.URLHash, &c.TitleHash, &c.ImageURL, &c.Excerpt, &c.Summary, &c.KeyPoints,
 		&c.Language, &c.PublishedAt, &c.DiscoveredAt, &c.BaseScore, &c.EditorialBoost,
-		&c.FinalScore, &c.ViewCount, &c.SaveCount, &c.UpdatedAt, &c.StoryClusterID,
+		&c.FinalScore, &c.ViewCount, &c.SaveCount, &c.UpdatedAt, &c.QualityState,
+		&c.QualityFlags, &c.QualityCheckedAt, &c.StoryClusterID,
 		&c.ClusterSourceCount, &c.VerificationStatus, &c.SourceQuality); err != nil {
 		return nil, err
 	}
@@ -60,7 +62,8 @@ func scanContentWithSource(row pgx.Row) (*domain.ContentItem, error) {
 	if err := row.Scan(&c.ID, &c.SourceID, &c.Type, &c.Status, &c.Title, &c.CanonicalURL,
 		&c.URLHash, &c.TitleHash, &c.ImageURL, &c.Excerpt, &c.Summary, &c.KeyPoints,
 		&c.Language, &c.PublishedAt, &c.DiscoveredAt, &c.BaseScore, &c.EditorialBoost,
-		&c.FinalScore, &c.ViewCount, &c.SaveCount, &c.UpdatedAt, &c.StoryClusterID,
+		&c.FinalScore, &c.ViewCount, &c.SaveCount, &c.UpdatedAt, &c.QualityState,
+		&c.QualityFlags, &c.QualityCheckedAt, &c.StoryClusterID,
 		&c.ClusterSourceCount, &c.VerificationStatus, &c.SourceQuality, &c.SourceName); err != nil {
 		return nil, err
 	}
@@ -825,6 +828,20 @@ func (r *ContentRepo) FollowingFeed(ctx context.Context, userID int64, limit, of
 // SetStatus updates the status of an item.
 func (r *ContentRepo) SetStatus(ctx context.Context, id int64, status domain.ContentStatus) error {
 	_, err := r.db.Pool.Exec(ctx, `UPDATE content_items SET status=$2 WHERE id=$1`, id, status)
+	return err
+}
+
+// SetQuality stores the latest deterministic quality assessment. The check is
+// intentionally independent of editorial status: an editor may publish a
+// reviewed item without erasing the evidence that originally routed it there.
+func (r *ContentRepo) SetQuality(ctx context.Context, id int64, state string, flags []string) error {
+	if flags == nil {
+		flags = []string{}
+	}
+	_, err := r.db.Pool.Exec(ctx, `
+		UPDATE content_items
+		SET quality_state=$2, quality_flags=$3, quality_checked_at=now()
+		WHERE id=$1`, id, state, flags)
 	return err
 }
 

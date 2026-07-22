@@ -131,20 +131,25 @@ go run ./tools/apply-migration migrations/0009_engagement_suite.up.sql
 2. **Fetchers** pull raw items (RSS / YouTube Data API v3 / Europe PMC / podcast
    RSS), which are **normalised** (canonical URL, tracking params stripped) and
    **deduped** in three tiers (url_hash → identifier → title similarity).
-3. **process_content** classifies topics (rule-based keywords), extracts
+3. A deterministic **quality gate** validates URL safety, publication time and
+   article completeness before expensive processing. It stores
+   `quality_state`, `quality_flags` and `quality_checked_at`; malformed,
+   blocked or incomplete items go to `needs_review` with a machine-readable
+   reason, while a missing image remains a non-blocking repair hint.
+4. **process_content** classifies topics (rule-based keywords), extracts
    entities (alias matching), and scores the item.
-4. **summarize** (gated by `base_score >= LLM_SCORE_THRESHOLD` and a daily USD
+5. **summarize** (gated by `base_score >= LLM_SCORE_THRESHOLD` and a daily USD
    budget) calls the LLM API to produce a paraphrased summary, or the fixed
    8-section research breakdown. Items below the gate go straight to `ready`.
-5. **Feed / homepage** blends 50% general + 30% personal + 20% discovery.
-6. **Analysis desk** ranks story clusters by heat (sources, velocity, followers,
+6. **Feed / homepage** blends 50% general + 30% personal + 20% discovery.
+7. **Analysis desk** ranks story clusters by heat (sources, velocity, followers,
    controversy) and commits to `EDITORIAL_PICKS_PER_DAY` of them, spaced three
    hours apart from `EDITORIAL_START_HOUR`. Each pick becomes a sourced draft for
    a human to review; nothing here publishes itself.
-7. **Telegram** sends a personalised Daily Brief on a timezone-aware schedule,
+8. **Telegram** sends a personalised Daily Brief on a timezone-aware schedule,
    plus follow alerts when a topic you follow breaks news — rationed by a
    six-hour cooldown and your quiet hours, on top of the usual anti-spam floors.
-8. **Morning audio** renders a narrated brief from the highest-ranked Vietnamese
+9. **Morning audio** renders a narrated brief from the highest-ranked Vietnamese
    stories; it is cached and reused.
 
 The job queue is pure PostgreSQL (`FOR UPDATE SKIP LOCKED`), with exponential

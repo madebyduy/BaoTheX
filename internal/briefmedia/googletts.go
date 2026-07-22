@@ -78,6 +78,10 @@ func (g *GoogleTTS) Render(ctx context.Context, transcript, outputPath string) (
 		if err != nil {
 			return 0, err
 		}
+		seconds := float64(len(part)*8) / googleTTSBitrate
+		if err := validateNarrationChunk(chunk, seconds); err != nil {
+			return 0, fmt.Errorf("google tts: chunk %d: %w", i+1, err)
+		}
 		audio = append(audio, part...)
 	}
 	if len(audio) == 0 {

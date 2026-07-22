@@ -141,12 +141,7 @@ func buildEveningScript(day time.Time, items []domain.ContentItem) (string, stri
 		}
 		ids = append(ids, item.ID)
 		b.WriteString(fmt.Sprintf("Tin thứ %d, từ %s. %s. ", i+1, sourceForSpeech(item.SourceName), item.Title))
-		b.WriteString(clipWords(itemSynopsis(item), 100))
-		for _, point := range item.KeyPoints[:min(2, len(item.KeyPoints))] {
-			if strings.TrimSpace(point) != "" {
-				b.WriteString(" " + clipWords(point, 34) + ".")
-			}
-		}
+		b.WriteString(clipSpeech(itemSynopsis(item), 110))
 		b.WriteString("\n\n")
 	}
 	b.WriteString("Quý vị vừa nghe Thể thao 20 giờ của ngày " + day.Format("02/01/2006") + " từ Báo Thể Ích. Cảm ơn quý vị đã lắng nghe. Chúc quý vị một buổi tối thư giãn và hẹn gặp lại trong bản tin Thể thao 6 giờ sáng mai.")
@@ -170,16 +165,7 @@ func buildMorningScript(day time.Time, items []domain.ContentItem) (string, stri
 		}
 		ids = append(ids, item.ID)
 		b.WriteString(fmt.Sprintf("Tin thứ %d, từ %s. %s. ", i+1, sourceForSpeech(item.SourceName), item.Title))
-		if item.Summary != nil && strings.TrimSpace(*item.Summary) != "" {
-			b.WriteString(clipWords(*item.Summary, 95))
-		} else if item.Excerpt != nil {
-			b.WriteString(clipWords(*item.Excerpt, 95))
-		}
-		for _, point := range item.KeyPoints[:min(2, len(item.KeyPoints))] {
-			if strings.TrimSpace(point) != "" {
-				b.WriteString(" " + clipWords(point, 32) + ".")
-			}
-		}
+		b.WriteString(clipSpeech(itemSynopsis(item), 110))
 		b.WriteString("\n\n")
 	}
 	b.WriteString("Quý vị vừa nghe Thể thao 6 giờ của ngày " + day.Format("02/01/2006") + " từ Báo Thể Ích. Cảm ơn quý vị đã lắng nghe. Hãy theo dõi đội bóng, giải đấu và vận động viên mình quan tâm để nhận bản tin phù hợp hơn. Kính chúc quý vị một ngày nhiều năng lượng và hẹn gặp lại trong bản tin tiếp theo.")
@@ -262,10 +248,37 @@ func weekdayVI(day time.Weekday) string {
 	return [...]string{"Chủ nhật", "thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy"}[day]
 }
 
-func clipWords(text string, max int) string {
+// clipSpeech keeps the edition bounded without cutting a spoken sentence in
+// half. Prefer the last complete sentence before the target and allow a small
+// overrun when the next sentence ending is close enough to sound natural.
+func clipSpeech(text string, max int) string {
 	words := strings.Fields(text)
 	if len(words) <= max {
 		return strings.Join(words, " ")
 	}
-	return strings.Join(words[:max], " ") + "…"
+
+	lastComplete := -1
+	for i := 0; i < max; i++ {
+		if speechWordEndsSentence(words[i]) {
+			lastComplete = i
+		}
+	}
+	if lastComplete >= 0 {
+		return strings.Join(words[:lastComplete+1], " ")
+	}
+
+	lookAhead := min(len(words), max+25)
+	for i := max; i < lookAhead; i++ {
+		if speechWordEndsSentence(words[i]) {
+			return strings.Join(words[:i+1], " ")
+		}
+	}
+
+	return strings.TrimRight(strings.Join(words[:max], " "), ",;:") + "."
+}
+
+func speechWordEndsSentence(word string) bool {
+	word = strings.TrimRight(word, `"'”’)]}`)
+	return strings.HasSuffix(word, ".") || strings.HasSuffix(word, "!") ||
+		strings.HasSuffix(word, "?") || strings.HasSuffix(word, "…")
 }

@@ -19,7 +19,7 @@ func TestSplitTranscriptNeverExceedsLimit(t *testing.T) {
 }
 
 func TestNormalizeSpeechTextCleansEditorialNoise(t *testing.T) {
-	input := "HLV &amp; ĐT Việt Nam dự FIFA World Cup. <b>BaoTheX</b> cập nhật…"
+	input := "HLV &amp; ĐT Việt Nam dự FIFA World Cup. &amp;apos;Trận đấu&amp;apos;. <b>BaoTheX</b> cập nhật…"
 	got := normalizeSpeechText(input)
 	for _, expected := range []string{
 		"huấn luyện viên & đội tuyển Việt Nam",
@@ -30,7 +30,7 @@ func TestNormalizeSpeechTextCleansEditorialNoise(t *testing.T) {
 			t.Fatalf("normalized speech missing %q: %s", expected, got)
 		}
 	}
-	if strings.Contains(got, "<b>") || strings.Contains(got, "&amp;") || strings.Contains(got, "…") {
+	if strings.Contains(got, "<b>") || strings.Contains(got, "&amp;") || strings.Contains(got, "&apos;") || strings.Contains(got, "…") {
 		t.Fatalf("speech still contains markup noise: %s", got)
 	}
 }
@@ -45,5 +45,15 @@ func TestSplitTranscriptPrefersSentenceBoundaries(t *testing.T) {
 		if !strings.HasSuffix(chunk, ".") {
 			t.Fatalf("chunk ended mid-sentence: %q", chunk)
 		}
+	}
+}
+
+func TestValidateNarrationChunkRejectsSilentTruncation(t *testing.T) {
+	text := strings.Repeat("nội dung thể thao rõ ràng ", 30)
+	if err := validateNarrationChunk(text, 5); err == nil {
+		t.Fatal("very short audio should be rejected for a long transcript")
+	}
+	if err := validateNarrationChunk(text, 40); err != nil {
+		t.Fatalf("plausible narration was rejected: %v", err)
 	}
 }

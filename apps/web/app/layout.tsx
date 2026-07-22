@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Archivo, Be_Vietnam_Pro, JetBrains_Mono } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
 import { SiteHeader } from "./ui";
+import { NavigationProgress } from "./navigation-progress";
 
 // Fonts are self-hosted and preloaded by next/font — no render-blocking round
 // trip to fonts.googleapis.com, and zero layout shift because the fallback
@@ -84,6 +86,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     >
       <body>
         <PersistentAudioProvider>
+          <Suspense fallback={null}>
+            <NavigationProgress />
+          </Suspense>
           <ProductAnalytics />
           <SiteHeader />
           <SiteBackButton />

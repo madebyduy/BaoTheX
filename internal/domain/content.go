@@ -55,6 +55,9 @@ type ContentItem struct {
 	ClusterSourceCount int           `json:"cluster_source_count"`
 	VerificationStatus string        `json:"verification_status,omitempty"`
 	SourceQuality      int           `json:"source_quality"`
+	QualityState       string        `json:"quality_state"`
+	QualityFlags       []string      `json:"quality_flags"`
+	QualityCheckedAt   *time.Time    `json:"quality_checked_at,omitempty"`
 
 	// SourceName is denormalised for read paths; empty unless the query joined sources.
 	SourceName string `json:"source_name,omitempty"`

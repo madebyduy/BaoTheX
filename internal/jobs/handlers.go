@@ -193,13 +193,34 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 	if err != nil {
 		return err
 	}
-	if err := h.DB.Content.SetStatus(ctx, item.ID, domain.StatusProcessing); err != nil {
+
+	// Run the cheap, deterministic quality gate before classification and LLM
+	// work. Persisting the result makes review routing explainable in admin and
+	// lets a later body backfill pass when this job is safely re-run.
+	var articleBody *domain.ContentBody
+	qualityBody := ""
+	if item.Type == domain.ContentArticle {
+		articleBody, err = h.DB.Content.GetBody(ctx, item.ID)
+		if err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return err
+		}
+		if articleBody != nil {
+			qualityBody = articleBody.OriginalBody
+		}
+	}
+	quality := ingest.AssessQuality(item, qualityBody, time.Now())
+	if err := h.DB.Content.SetQuality(ctx, item.ID, quality.State, quality.Flags); err != nil {
 		return err
 	}
-	if item.Type == domain.ContentArticle {
-		if body, bodyErr := h.DB.Content.GetBody(ctx, item.ID); bodyErr == nil && ingest.BlockedArticleText(body.OriginalBody) {
+	if quality.State == "review" {
+		if quality.Has("blocked_article_text") {
 			return h.DB.Content.QuarantineBlockedArticle(ctx, item.ID)
 		}
+		return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)
+	}
+
+	if err := h.DB.Content.SetStatus(ctx, item.ID, domain.StatusProcessing); err != nil {
+		return err
 	}
 
 	// Gather extra text (abstract / video description) to aid classification.
@@ -257,11 +278,7 @@ func (h *Handlers) handleProcess(ctx context.Context, j *domain.Job) error {
 	// Articles are never public from a headline/excerpt alone. Foreign articles
 	// additionally remain hidden until the Vietnamese edition has been stored.
 	if item.Type == domain.ContentArticle {
-		body, bodyErr := h.DB.Content.GetBody(ctx, item.ID)
-		if bodyErr != nil || len(strings.Fields(body.OriginalBody)) < 120 {
-			return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)
-		}
-		if item.Language != "vi" && !translationReady(body) {
+		if item.Language != "vi" && !translationReady(articleBody) {
 			if h.Summarizer == nil || !h.Summarizer.Enabled() {
 				return h.DB.Content.SetStatus(ctx, item.ID, domain.StatusNeedsReview)
 			}

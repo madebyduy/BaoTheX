@@ -397,6 +397,9 @@ function ContentRows({
               {item.title}
             </Link>
             <p>{item.summary || item.excerpt || "Chưa có tóm tắt."}</p>
+            {item.quality_flags?.length ? (
+              <small>Kiểm tra dữ liệu: {item.quality_flags.join(" · ")}</small>
+            ) : null}
           </div>
           <div className="admin-actions">
             <Link
