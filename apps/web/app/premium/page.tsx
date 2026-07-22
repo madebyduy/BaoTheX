@@ -4,15 +4,21 @@ import { CheckoutButton } from "./checkout-button";
 
 export const metadata = pageMetadata({
   title: "BaoTheX Premium",
-  description:
-    "Nâng cấp Premium: bản tin chuyên sâu, trải nghiệm không quảng cáo và tiện ích riêng cho người hâm mộ.",
+  description: "BaoTheX Premium 10.000đ/tháng: dòng tin theo dõi tuyệt đối và Web Push tức thời.",
   path: "/premium",
 });
 import { PremiumStatus } from "./premium-status";
 import { api } from "../lib";
 
 export default async function PremiumPage() {
-  const capabilities = await api<{ sepay_enabled?: boolean }>("/capabilities", {}, 60);
+  const capabilities = await api<{ sepay_enabled?: boolean; premium_monthly_price?: number }>(
+    "/capabilities",
+    {},
+    // Price and checkout availability must never be served from an older ISR
+    // snapshot: the number on this button has to match the SePay order exactly.
+    0,
+  );
+  const price = capabilities.premium_monthly_price || 10000;
   return (
     <>
       <main className="wrap premium-page">
@@ -24,11 +30,11 @@ export default async function PremiumPage() {
             Đúng đội bạn hơn.
           </h1>
           <p>
-            Nhận tin đã xác minh, bản audio 6–8 phút và cảnh báo từ những đội, giải đấu, cầu thủ bạn
-            thật sự quan tâm.
+            Giữ những gì cần thiết trong tầm mắt: dòng tin không nhiễu và thông báo tức thời từ đội,
+            giải đấu, vận động viên bạn thật sự quan tâm.
           </p>
           {capabilities.sepay_enabled ? (
-            <CheckoutButton />
+            <CheckoutButton price={price} />
           ) : (
             <p className="settings-message">
               Premium đang ở chế độ giới thiệu; mọi tính năng cốt lõi vẫn miễn phí.
@@ -39,34 +45,34 @@ export default async function PremiumPage() {
         <section className="premium-grid">
           <article>
             <b>01</b>
-            <h2>Hai cuộc hẹn mỗi ngày</h2>
+            <h2>Dòng tin chỉ dành cho bạn</h2>
             <p>
-              Thể thao 6h và 20h chỉ dùng tin đã biên tập tiếng Việt, phát trên web và gửi thẳng qua
-              Telegram.
+              Bật chế độ “Chỉ chủ đề theo dõi” để loại khỏi trang chủ những môn, đội và câu chuyện
+              bạn không quan tâm.
             </p>
           </article>
           <article>
             <b>02</b>
-            <h2>Tin đúng đội bạn</h2>
+            <h2>Web Push tức thời</h2>
             <p>
-              Telegram và Web Push cho tin xác nhận, tỷ số, đội hình, chấn thương và chuyển nhượng
-              của đội bạn theo dõi.
+              Nhận thông báo trực tiếp trên máy tính về tin quan trọng, không cần mở Telegram hay
+              giữ trang báo luôn bật.
             </p>
           </article>
           <article>
             <b>03</b>
-            <h2>Theo dõi thật sự</h2>
+            <h2>Vẫn miễn phí mỗi ngày</h2>
             <p>
-              Cá nhân hóa theo đội bóng, giải đấu, vận động viên và nguồn bạn tin tưởng — không cần
-              doomscroll.
+              Theo dõi chủ đề cơ bản, đọc toàn bộ bài báo và nhận bản tin Telegram 6h/20h vẫn miễn
+              phí cho mọi tài khoản.
             </p>
           </article>
           <article>
             <b>04</b>
-            <h2>Góc Nhìn BaoTheX</h2>
+            <h2>10.000đ cho 30 ngày</h2>
             <p>
-              Bài phân tích đa nguồn: điều đã xác nhận, điểm các nguồn còn vênh nhau và điều cần
-              theo dõi tiếp.
+              Một mức giá nhỏ, không quảng cáo quyền lợi chưa tồn tại và có thể gia hạn thêm 30 ngày
+              bất cứ lúc nào.
             </p>
           </article>
         </section>

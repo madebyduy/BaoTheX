@@ -43,7 +43,8 @@ export function PremiumStatus() {
       <div className="premium-status active">
         <b>Premium đang hoạt động</b>
         <span>
-          Audio 6h/20h và cảnh báo theo dõi đã sẵn sàng{expiresAt ? ` đến ${expiresAt}` : ""}.
+          Dòng tin riêng và Web Push đang hoạt động{expiresAt ? ` đến ${expiresAt}` : ""}; audio
+          6h/20h vẫn miễn phí qua Telegram.
         </span>
         <Link href="/cai-dat">Chỉnh lịch Telegram →</Link>
       </div>
@@ -51,12 +52,14 @@ export function PremiumStatus() {
   }
   if (status === "guest") {
     return (
-      <p className="premium-note">Đăng nhập để kích hoạt Premium và liên kết Telegram cá nhân.</p>
+      <p className="premium-note">
+        Đăng nhập để liên kết Telegram và nhận miễn phí bản tin 6h/20h.
+      </p>
     );
   }
   return (
     <p className="premium-note">
-      Premium không khóa tin thường; chỉ mở các trải nghiệm theo dõi và bản tin riêng.
+      Premium mở dòng tin chỉ theo dõi và Web Push; bản tin 6h/20h qua Telegram vẫn miễn phí.
     </p>
   );
 }

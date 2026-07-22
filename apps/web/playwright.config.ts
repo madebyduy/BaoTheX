@@ -3,7 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 // Smoke tests run against a production build with no API backend. Public pages
 // must render honest empty states rather than demo/editorial content. Point the
 // API URL at a closed port so upstream failures are deterministic and fast.
-const PORT = 3000;
+const PORT = Number(process.env.PLAYWRIGHT_PORT || 3000);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
@@ -23,6 +23,7 @@ export default defineConfig({
     timeout: 120_000,
     reuseExistingServer: !process.env.CI,
     env: {
+      PORT: String(PORT),
       NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:9",
       NEXT_PUBLIC_SITE_URL: BASE_URL,
     },

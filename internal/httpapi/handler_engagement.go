@@ -206,6 +206,15 @@ func (s *Server) isMissingLocalAudio(audioURL *string) bool {
 
 func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
+	premium, err := s.hasActivePremium(r.Context(), u.ID)
+	if err != nil {
+		writeDomainError(w, s.log, err)
+		return
+	}
+	if !premium {
+		writeError(w, http.StatusForbidden, "premium_required", "Premium is required for Web Push")
+		return
+	}
 	var input struct {
 		Endpoint string `json:"endpoint"`
 		Keys     struct {
@@ -224,7 +233,7 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_endpoint", "invalid push endpoint")
 		return
 	}
-	err := s.db.Engagement.UpsertPushSubscription(r.Context(), u.ID, domain.PushSubscription{
+	err = s.db.Engagement.UpsertPushSubscription(r.Context(), u.ID, domain.PushSubscription{
 		Endpoint: input.Endpoint, P256DH: input.Keys.P256DH, Auth: input.Keys.Auth,
 		UserAgent: r.UserAgent(),
 	})
@@ -252,6 +261,15 @@ func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
+	premium, premiumErr := s.hasActivePremium(r.Context(), u.ID)
+	if premiumErr != nil {
+		writeDomainError(w, s.log, premiumErr)
+		return
+	}
+	if !premium {
+		writeError(w, http.StatusForbidden, "premium_required", "Premium is required for Web Push")
+		return
+	}
 	if s.pushClient == nil || !s.pushClient.Enabled() {
 		writeError(w, http.StatusServiceUnavailable, "push_not_configured", "Web Push is not configured")
 		return

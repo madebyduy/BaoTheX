@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"repwire/internal/domain"
+	"repwire/internal/textutil"
 )
 
 // Clustering thresholds. titleSimilarityFloor is pg_trgm similarity on the
@@ -162,6 +163,7 @@ func (r *ContentRepo) GetStoryCluster(ctx context.Context, id int64) (*domain.St
 	if err != nil {
 		return nil, err
 	}
+	cluster.RepresentativeTitle = textutil.DecodeHTMLEntities(cluster.RepresentativeTitle)
 	rows, err := r.db.Pool.Query(ctx, `SELECT `+contentCols+`,s.name
 		FROM story_cluster_items sci
 		JOIN content_items c ON c.id=sci.content_id

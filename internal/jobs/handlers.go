@@ -68,7 +68,7 @@ func (h *Handlers) Register() map[string]HandlerFunc {
 		domain.JobGenerateAudio:       h.handleGenerateAudio,
 		domain.JobGenerateAnalysis:    h.handleGenerateAnalysis,
 		domain.JobGeneratePerspective: h.handleGeneratePerspective,
-		domain.JobSendPremiumBrief:    h.handleSendPremiumBrief,
+		domain.JobSendAudioBrief:      h.handleSendAudioBrief,
 	}
 }
 
@@ -571,7 +571,7 @@ func (h *Handlers) deliver(ctx context.Context, userID, chatID int64, kind domai
 	msgID, err := h.Telegram.SendMessage(ctx, chatID, msg, nil)
 	if errors.Is(err, telegram.ErrBlocked) {
 		// User blocked the bot: stop sending, log the delivery error.
-		_ = h.DB.Telegram.SetDailyEnabled(ctx, userID, false)
+		_ = h.DB.Telegram.SetBriefDeliveryEnabled(ctx, userID, false)
 		e := "blocked"
 		_ = h.DB.Telegram.RecordDelivery(ctx, userID, kind, ids, nil, &e)
 		return nil

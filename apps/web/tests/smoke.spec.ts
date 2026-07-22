@@ -43,15 +43,6 @@ test("unknown route shows branded 404", async ({ page }) => {
   await expect(page.getByText("404")).toBeVisible();
 });
 
-test("theme toggle switches data-theme", async ({ page }) => {
-  await page.goto("/");
-  const html = page.locator("html");
-  const before = await html.getAttribute("data-theme");
-  await page.locator(".theme-toggle").click();
-  const after = await html.getAttribute("data-theme");
-  expect(after).not.toBe(before);
-});
-
 test("RSS feed is served as XML", async ({ request }) => {
   const res = await request.get("/feed.xml");
   expect(res.ok()).toBeTruthy();

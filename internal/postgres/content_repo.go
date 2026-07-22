@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"repwire/internal/domain"
+	"repwire/internal/textutil"
 )
 
 // ContentRepo persists content items and their subtype rows.
@@ -54,6 +55,7 @@ func scanContent(row pgx.Row) (*domain.ContentItem, error) {
 		&c.ClusterSourceCount, &c.VerificationStatus, &c.SourceQuality); err != nil {
 		return nil, err
 	}
+	c.Title = textutil.DecodeHTMLEntities(c.Title)
 	return &c, nil
 }
 
@@ -67,6 +69,7 @@ func scanContentWithSource(row pgx.Row) (*domain.ContentItem, error) {
 		&c.ClusterSourceCount, &c.VerificationStatus, &c.SourceQuality, &c.SourceName); err != nil {
 		return nil, err
 	}
+	c.Title = textutil.DecodeHTMLEntities(c.Title)
 	return &c, nil
 }
 

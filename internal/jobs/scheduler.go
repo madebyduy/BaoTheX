@@ -37,6 +37,17 @@ type Scheduler struct {
 	ttsEnabled  bool
 }
 
+type audioBriefScheduleSlot struct {
+	name           string
+	generationHour int
+	deliveryHour   int
+}
+
+var audioBriefSchedule = []audioBriefScheduleSlot{
+	{name: "morning", generationHour: 5, deliveryHour: 6},
+	{name: "evening", generationHour: 19, deliveryHour: 20},
+}
+
 // NewScheduler constructs a Scheduler.
 func NewScheduler(db *postgres.DB, enqueue *Enqueuer, log *slog.Logger, translateMinScore float64, translateMaxAge time.Duration, editorialStartHour, picksPerDay int, sportsSync *sportsdata.Syncer) *Scheduler {
 	if picksPerDay < 1 {
@@ -78,8 +89,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 		go s.loop(ctx, "editorial-pick", time.Hour, s.pickHotTopics)
 	}
 	if s.ttsEnabled {
-		go s.loop(ctx, "audio", time.Hour, s.enqueueDailyAudio)
-		go s.loop(ctx, "premium-audio-delivery", 15*time.Minute, s.enqueuePremiumAudioBriefs)
+		// Frequent, idempotent checks keep the fixed 06:00/20:00 appointments
+		// close to wall-clock time regardless of when this worker was started.
+		go s.loop(ctx, "audio", 5*time.Minute, s.enqueueDailyAudio)
+		go s.loop(ctx, "audio-delivery", time.Minute, s.enqueueAudioBriefDeliveries)
 	}
 	if s.sportsSync != nil && s.sportsSync.Enabled() {
 		go s.loop(ctx, "sports-data", 15*time.Minute, s.sportsSync.Sync)
@@ -104,17 +117,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 	s.log.Info("scheduler stopped")
 }
 
-// enqueuePremiumAudioBriefs turns the two public audio editions into a daily
-// appointment for connected Premium members. It runs in Vietnam time because
-// the editorial schedule is fixed at 06:00 and 20:00 ICT.
-func (s *Scheduler) enqueuePremiumAudioBriefs(ctx context.Context) error {
+// enqueueAudioBriefDeliveries turns the two public audio editions into daily
+// appointments for every connected Telegram user. It runs in Vietnam time
+// because the editorial schedule is fixed at 06:00 and 20:00 ICT.
+func (s *Scheduler) enqueueAudioBriefDeliveries(ctx context.Context) error {
 	now := time.Now().In(vietnamTime())
-	editions := []struct {
-		name string
-		hour int
-	}{{"morning", 6}, {"evening", 20}}
-	for _, edition := range editions {
-		if now.Hour() < edition.hour {
+	for _, edition := range audioBriefSchedule {
+		if now.Hour() < edition.deliveryHour {
 			continue
 		}
 		brief, err := s.db.Engagement.AudioBriefForDate(ctx, now, edition.name)
@@ -127,13 +136,13 @@ func (s *Scheduler) enqueuePremiumAudioBriefs(ctx context.Context) error {
 		if brief.DurationSeconds == nil || *brief.DurationSeconds < 180 {
 			continue
 		}
-		users, err := s.db.Telegram.PremiumUsersForAudioBrief(ctx, edition.name)
+		users, err := s.db.Telegram.UsersForAudioBrief(ctx, edition.name)
 		if err != nil {
 			return err
 		}
 		for _, userID := range users {
-			if err := s.enqueue.EnqueueSendPremiumBrief(ctx, userID, now, edition.name); err != nil {
-				s.log.Error("enqueue premium audio failed", "user", userID, "edition", edition.name, "err", err)
+			if err := s.enqueue.EnqueueSendAudioBrief(ctx, userID, now, edition.name); err != nil {
+				s.log.Error("enqueue audio delivery failed", "user", userID, "edition", edition.name, "err", err)
 			}
 		}
 	}
@@ -145,12 +154,8 @@ func (s *Scheduler) enqueueDailyAudio(ctx context.Context) error {
 	// server's deployment timezone. Because scheduler loops run immediately on
 	// startup, this also creates a missed edition when a worker starts late.
 	now := time.Now().In(vietnamTime())
-	editions := []struct {
-		name string
-		hour int
-	}{{"morning", 5}, {"evening", 19}}
-	for _, edition := range editions {
-		if now.Hour() < edition.hour {
+	for _, edition := range audioBriefSchedule {
+		if now.Hour() < edition.generationHour {
 			s.log.Info("audio edition not due", "edition", edition.name, "date", now.Format("2006-01-02"), "hour", now.Hour())
 			continue
 		}

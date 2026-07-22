@@ -9,12 +9,14 @@ type InstallPrompt = Event & {
   userChoice: Promise<{ outcome: string }>;
 };
 type Capabilities = { web_push_enabled: boolean; web_push_public_key?: string };
+type PremiumStatus = { active?: boolean };
 
 export function PWAControls() {
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [state, setState] = useState("Đang kiểm tra thiết bị…");
   const [subscribed, setSubscribed] = useState(false);
+  const [premiumActive, setPremiumActive] = useState(false);
 
   useEffect(() => {
     const onInstall = (event: Event) => {
@@ -25,6 +27,13 @@ export function PWAControls() {
     void fetch(`${API}/api/v1/capabilities`)
       .then((r) => r.json())
       .then((json) => setCapabilities(json.data ?? json));
+    void fetch(`${API}/api/v1/premium/status`, { credentials: "include" })
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
+      .then((json) => {
+        const premium = (json.data ?? json) as PremiumStatus;
+        setPremiumActive(Boolean(premium.active));
+      })
+      .catch(() => setPremiumActive(false));
     if ("serviceWorker" in navigator) {
       void navigator.serviceWorker
         .register("/sw.js")
@@ -50,6 +59,12 @@ export function PWAControls() {
   }
 
   async function enablePush() {
+    if (!premiumActive) {
+      setState(
+        "Web Push tức thời thuộc Premium 10.000đ/tháng; ứng dụng cài trên máy vẫn miễn phí.",
+      );
+      return;
+    }
     if (!capabilities?.web_push_enabled || !capabilities.web_push_public_key) {
       setState("Máy chủ chưa bật Web Push.");
       return;
@@ -106,9 +121,9 @@ export function PWAControls() {
           Cài lên máy tính
         </button>
         <button className="btn ember" type="button" onClick={enablePush}>
-          Bật thông báo
+          {premiumActive ? "Bật thông báo" : "Mở với Premium"}
         </button>
-        {subscribed ? (
+        {subscribed && premiumActive ? (
           <button className="btn light" type="button" onClick={testPush}>
             Gửi thử
           </button>

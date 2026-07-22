@@ -83,6 +83,7 @@ func (s *Server) handleUpdatePrefs(w http.ResponseWriter, r *http.Request) {
 		writeDomainError(w, s.log, err)
 		return
 	}
+	wasFollowingOnly := prefs.FeedFollowingOnly
 	if !decodeJSON(w, r, prefs) {
 		return
 	}
@@ -91,7 +92,16 @@ func (s *Server) handleUpdatePrefs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation", "daily_max_items must be between 3 and 7")
 		return
 	}
-	if prefs.FeedFollowingOnly {
+	if prefs.FeedFollowingOnly && !wasFollowingOnly {
+		premium, premiumErr := s.hasActivePremium(r.Context(), u.ID)
+		if premiumErr != nil {
+			writeDomainError(w, s.log, premiumErr)
+			return
+		}
+		if !premium {
+			writeError(w, http.StatusForbidden, "premium_required", "Premium is required for following-only feed mode")
+			return
+		}
 		hasTopics, checkErr := s.db.Follow.HasFeedTopics(r.Context(), u.ID)
 		if checkErr != nil {
 			writeDomainError(w, s.log, checkErr)

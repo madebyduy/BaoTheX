@@ -68,6 +68,9 @@ func TestLoadDefaultsAreReachable(t *testing.T) {
 	if c.EditorialPicksPerDay != 3 {
 		t.Fatalf("EditorialPicksPerDay = %d, want 3", c.EditorialPicksPerDay)
 	}
+	if c.PremiumMonthlyPrice != 10000 {
+		t.Fatalf("PremiumMonthlyPrice = %d, want 10000", c.PremiumMonthlyPrice)
+	}
 }
 
 func TestTranslateMaxAgeDefaultsAndParses(t *testing.T) {

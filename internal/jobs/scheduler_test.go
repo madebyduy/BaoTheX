@@ -1,10 +1,22 @@
 package jobs
 
 import (
+	"reflect"
 	"testing"
 
 	"repwire/internal/domain"
 )
+
+func TestAudioBriefScheduleGeneratesBeforeSixAndTwenty(t *testing.T) {
+	got := audioBriefSchedule
+	want := []audioBriefScheduleSlot{
+		{name: "morning", generationHour: 5, deliveryHour: 6},
+		{name: "evening", generationHour: 19, deliveryHour: 20},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("audio brief schedule = %+v, want %+v", got, want)
+	}
+}
 
 func TestRankHotTopicsPicksTheHottest(t *testing.T) {
 	got, ok := rankHotTopics([]domain.HotTopicCluster{

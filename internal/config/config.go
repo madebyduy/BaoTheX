@@ -188,7 +188,7 @@ func Load() (*Config, error) {
 		SePaySecretKey:             env("SEPAY_SECRET_KEY", ""),
 		SePayBaseURL:               env("SEPAY_BASE_URL", "https://pay.sepay.vn"),
 		SePayIPNSecretKey:          env("SEPAY_IPN_SECRET_KEY", ""),
-		PremiumMonthlyPrice:        envInt("PREMIUM_MONTHLY_PRICE", 39000),
+		PremiumMonthlyPrice:        envInt("PREMIUM_MONTHLY_PRICE", 10000),
 		LLMAPIKey:                  firstLLMKey,
 		LLMAPIKeys:                 llmKeys,
 		LLMBaseURL:                 env("LLM_BASE_URL", "https://api.anthropic.com/v1/messages"),

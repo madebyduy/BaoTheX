@@ -104,7 +104,7 @@ export function NotificationSettings() {
             checked={prefs.audio_enabled}
             onChange={() => toggle("audio_enabled")}
           />{" "}
-          Premium: nhận audio Thể thao 6h qua Telegram
+          Nhận audio Thể thao 6h qua Telegram
         </label>
         <label>
           <input
@@ -112,7 +112,7 @@ export function NotificationSettings() {
             checked={prefs.evening_brief_enabled}
             onChange={() => toggle("evening_brief_enabled")}
           />{" "}
-          Premium: nhận audio Thể thao 20h qua Telegram
+          Nhận audio Thể thao 20h qua Telegram
         </label>
         <label>
           <input

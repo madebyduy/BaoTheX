@@ -8,6 +8,7 @@ import (
 
 	"repwire/internal/domain"
 	"repwire/internal/postgres"
+	"repwire/internal/textutil"
 )
 
 // Store normalises a raw item, applies the three dedup tiers and inserts the
@@ -80,6 +81,10 @@ func Store(ctx context.Context, db *postgres.DB, src *domain.Source, raw RawItem
 	if lang == "" {
 		lang = src.DefaultLang
 	}
+	// RSS titles are allowed to contain HTML entities. Decode them before both
+	// hashing and persistence so visually identical headlines deduplicate and
+	// readers never see fragments such as "ph\u0026eacute;p".
+	raw.Title = strings.TrimSpace(textutil.DecodeHTMLEntities(raw.Title))
 	titleHash := NormalizeTitle(raw.Title)
 
 	item := &domain.ContentItem{

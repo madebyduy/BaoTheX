@@ -88,10 +88,10 @@ func (e *Enqueuer) EnqueueGenerateAudio(ctx context.Context, day time.Time, edit
 	})
 }
 
-func (e *Enqueuer) EnqueueSendPremiumBrief(ctx context.Context, userID int64, day time.Time, edition string) error {
+func (e *Enqueuer) EnqueueSendAudioBrief(ctx context.Context, userID int64, day time.Time, edition string) error {
 	date := day.Format("2006-01-02")
-	return e.repo.Enqueue(ctx, domain.JobSendPremiumBrief, domain.PremiumBriefPayload{UserID: userID, Date: date, Edition: edition}, postgres.EnqueueOpts{
-		DedupKey:    fmt.Sprintf("premium-audio:%d:%s:%s", userID, edition, date),
+	return e.repo.Enqueue(ctx, domain.JobSendAudioBrief, domain.AudioBriefDeliveryPayload{UserID: userID, Date: date, Edition: edition}, postgres.EnqueueOpts{
+		DedupKey:    fmt.Sprintf("audio-delivery:%d:%s:%s", userID, edition, date),
 		Priority:    3,
 		MaxAttempts: 3,
 	})

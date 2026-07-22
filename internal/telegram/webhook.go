@@ -103,7 +103,7 @@ func (h *Handler) handleStart(ctx context.Context, u *Update, text string) error
 	if err != nil {
 		return err
 	}
-	return h.reply(ctx, chatID, "✅ Đã kết nối. Bạn sẽ nhận Daily Brief lúc 7:00 mỗi sáng.")
+	return h.reply(ctx, chatID, "✅ Đã kết nối. Bạn sẽ nhận bản tin Thể thao 6h và 20h mỗi ngày.")
 }
 
 func (h *Handler) handlePause(ctx context.Context, chatID int64, paused bool) error {
@@ -114,7 +114,7 @@ func (h *Handler) handlePause(ctx context.Context, chatID int64, paused bool) er
 	if err != nil {
 		return err
 	}
-	if err := h.db.Telegram.SetDailyEnabled(ctx, conn.UserID, !paused); err != nil {
+	if err := h.db.Telegram.SetBriefDeliveryEnabled(ctx, conn.UserID, !paused); err != nil {
 		return err
 	}
 	if paused {

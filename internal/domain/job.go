@@ -39,7 +39,7 @@ const (
 	// on-demand, evaluative take on the event described by one article, rather
 	// than the multi-source cluster synthesis that JobGenerateAnalysis produces.
 	JobGeneratePerspective = "generate_article_perspective"
-	JobSendPremiumBrief    = "send_premium_audio_brief"
+	JobSendAudioBrief      = "send_audio_brief"
 )
 
 // Job is one unit of background work stored in the jobs table.
@@ -91,9 +91,9 @@ type BriefPayload struct {
 	Edition string `json:"edition"`
 }
 
-// PremiumBriefPayload targets one member and one of the two fixed editions.
+// AudioBriefDeliveryPayload targets one linked user and one fixed edition.
 // It deliberately carries a date so delayed jobs never send yesterday's brief.
-type PremiumBriefPayload struct {
+type AudioBriefDeliveryPayload struct {
 	UserID  int64  `json:"user_id"`
 	Date    string `json:"date"`
 	Edition string `json:"edition"`

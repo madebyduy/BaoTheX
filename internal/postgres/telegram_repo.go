@@ -39,6 +39,16 @@ func (r *TelegramRepo) ConsumeLinkCode(ctx context.Context, code string, chatID 
 			INSERT INTO telegram_connections (user_id, chat_id, username) VALUES ($1,$2,$3)
 			ON CONFLICT (user_id) DO UPDATE SET chat_id=EXCLUDED.chat_id, username=EXCLUDED.username, linked_at=now()`,
 			userID, chatID, username)
+		if err != nil {
+			return err
+		}
+		// Following the deep link is the explicit opt-in. Re-linking also resumes
+		// both fixed editions after a previous pause or blocked-bot recovery.
+		_, err = tx.Exec(ctx, `INSERT INTO notification_preferences
+			(user_id,daily_enabled,audio_enabled,evening_brief_enabled)
+			VALUES ($1,true,true,true)
+			ON CONFLICT (user_id) DO UPDATE SET daily_enabled=true,
+				audio_enabled=true,evening_brief_enabled=true`, userID)
 		return err
 	})
 	return userID, err
@@ -131,19 +141,18 @@ func (r *TelegramRepo) UpdatePrefs(ctx context.Context, p *domain.NotificationPr
 	return err
 }
 
-// PremiumUsersForAudioBrief returns linked Premium users who asked for this
+// UsersForAudioBrief returns every linked user who opted into the requested
 // fixed edition. Morning follows DailyEnabled; evening has its own switch.
-func (r *TelegramRepo) PremiumUsersForAudioBrief(ctx context.Context, edition string) ([]int64, error) {
+func (r *TelegramRepo) UsersForAudioBrief(ctx context.Context, edition string) ([]int64, error) {
 	condition := "p.daily_enabled"
 	if edition == "evening" {
 		condition = "p.evening_brief_enabled"
 	}
 	rows, err := r.db.Pool.Query(ctx, `
 		SELECT u.id FROM users u
-		JOIN user_subscriptions sub ON sub.user_id=u.id
 		JOIN telegram_connections tc ON tc.user_id=u.id
 		JOIN notification_preferences p ON p.user_id=u.id
-		WHERE sub.status='active' AND sub.current_period_end > now() AND p.audio_enabled AND `+condition)
+		WHERE p.audio_enabled AND `+condition)
 	if err != nil {
 		return nil, err
 	}
@@ -151,10 +160,12 @@ func (r *TelegramRepo) PremiumUsersForAudioBrief(ctx context.Context, edition st
 	return scanIDs(rows)
 }
 
-// SetDailyEnabled toggles daily digests (used by /pause, /resume, and 403 handling).
-func (r *TelegramRepo) SetDailyEnabled(ctx context.Context, userID int64, enabled bool) error {
+// SetBriefDeliveryEnabled toggles the morning text/audio and evening audio
+// together. It is used by /pause, /resume, and blocked-bot recovery.
+func (r *TelegramRepo) SetBriefDeliveryEnabled(ctx context.Context, userID int64, enabled bool) error {
 	_, err := r.db.Pool.Exec(ctx,
-		`UPDATE notification_preferences SET daily_enabled=$2 WHERE user_id=$1`, userID, enabled)
+		`UPDATE notification_preferences SET daily_enabled=$2,audio_enabled=$2,
+			evening_brief_enabled=$2 WHERE user_id=$1`, userID, enabled)
 	return err
 }
 

@@ -9,12 +9,14 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 
 type Follows = { topics?: Topic[] };
 type FeedPreferences = { feed_following_only?: boolean };
+type PremiumStatus = { active?: boolean };
 
 export function FeedCustomizationSettings() {
   const router = useRouter();
   const [topics, setTopics] = useState<Topic[]>([]);
   const [followed, setFollowed] = useState<Set<number>>(new Set());
   const [followingOnly, setFollowingOnly] = useState(false);
+  const [premiumActive, setPremiumActive] = useState(false);
   const [message, setMessage] = useState("Đang tải dòng tin của bạn…");
   const [busy, setBusy] = useState<number | "mode" | null>(null);
 
@@ -23,20 +25,24 @@ export function FeedCustomizationSettings() {
       fetch(`${API}/api/v1/topics`, { credentials: "include" }),
       fetch(`${API}/api/v1/follows`, { credentials: "include" }),
       fetch(`${API}/api/v1/notifications/prefs`, { credentials: "include" }),
+      fetch(`${API}/api/v1/premium/status`, { credentials: "include" }),
     ])
-      .then(async ([topicResponse, followResponse, prefsResponse]) => {
-        if (!followResponse.ok || !prefsResponse.ok) throw new Error("auth");
-        const [topicJSON, followJSON, prefsJSON] = await Promise.all([
+      .then(async ([topicResponse, followResponse, prefsResponse, premiumResponse]) => {
+        if (!followResponse.ok || !prefsResponse.ok || !premiumResponse.ok) throw new Error("auth");
+        const [topicJSON, followJSON, prefsJSON, premiumJSON] = await Promise.all([
           topicResponse.json(),
           followResponse.json(),
           prefsResponse.json(),
+          premiumResponse.json(),
         ]);
         const allTopics = (topicJSON.data ?? topicJSON) as Topic[];
         const follows = (followJSON.data ?? followJSON) as Follows;
         const prefs = (prefsJSON.data ?? prefsJSON) as FeedPreferences;
+        const premium = (premiumJSON.data ?? premiumJSON) as PremiumStatus;
         setTopics(allTopics);
         setFollowed(new Set((follows.topics || []).map((topic) => topic.id)));
-        setFollowingOnly(Boolean(prefs.feed_following_only));
+        setPremiumActive(Boolean(premium.active));
+        setFollowingOnly(Boolean(premium.active && prefs.feed_following_only));
         setMessage("");
       })
       .catch(() => setMessage("Đăng nhập để tạo dòng tin riêng theo sở thích."));
@@ -82,6 +88,10 @@ export function FeedCustomizationSettings() {
 
   async function toggleMode() {
     const next = !followingOnly;
+    if (next && !premiumActive) {
+      setMessage("Chế độ chỉ hiện chủ đề theo dõi thuộc Premium 10.000đ/tháng.");
+      return;
+    }
     if (next && followed.size === 0) {
       setMessage("Hãy chọn ít nhất một chủ đề trước khi bật chế độ chỉ theo dõi.");
       return;
@@ -140,7 +150,9 @@ export function FeedCustomizationSettings() {
           Chủ đề đã chọn được ưu tiên trên trang chủ và bản tin Telegram. Bạn có thể thay đổi bất cứ
           lúc nào.
         </p>
-        <Link href="/">Xem dòng tin của tôi →</Link>
+        <Link href={premiumActive ? "/" : "/premium"}>
+          {premiumActive ? "Xem dòng tin của tôi →" : "Mở chế độ chỉ theo dõi · 10.000đ/tháng →"}
+        </Link>
       </div>
 
       {visibleTopics.length ? (

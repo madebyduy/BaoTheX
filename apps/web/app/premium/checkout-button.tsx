@@ -4,7 +4,7 @@ import { useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 
-export function CheckoutButton() {
+export function CheckoutButton({ price }: { price: number }) {
   const [state, setState] = useState("");
   async function checkout() {
     setState("Đang tạo phiên thanh toán…");
@@ -34,7 +34,7 @@ export function CheckoutButton() {
   return (
     <div>
       <button className="btn ember premium-cta" type="button" onClick={checkout}>
-        Nâng cấp Premium · 39.000đ/tháng
+        Nâng cấp Premium · {new Intl.NumberFormat("vi-VN").format(price)}đ/tháng
       </button>
       {state ? <p className="settings-message">{state}</p> : null}
     </div>
