@@ -85,7 +85,7 @@ export function PersistentAudioProvider({ children }: { children: React.ReactNod
       persist(nextTrack, 0);
       startPlayback(audio);
     },
-    [persist, startPlayback, track?.id],
+    [persist, startPlayback, track?.id, track?.src],
   );
 
   const toggle = useCallback(() => {
