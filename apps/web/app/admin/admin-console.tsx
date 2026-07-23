@@ -5,7 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Item, Source } from "../lib";
 import { AnalysisDesk } from "./goc-nhin/analysis-desk";
 
-const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
+const API =
+  typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 
 type User = { email: string; display_name?: string; role: string };
 type Job = {

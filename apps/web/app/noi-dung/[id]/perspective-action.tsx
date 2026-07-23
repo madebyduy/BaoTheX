@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
+const API =
+  typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 
 // PerspectiveAction is an admin-only control on the article page. It asks the
 // newsroom to draft a "Góc nhìn" — an evaluative take on the event — from THIS

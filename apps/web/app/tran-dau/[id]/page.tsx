@@ -63,7 +63,8 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
     ? event.related_content
     : await api<Item[]>(`/events/${id}/content`, [], 30);
   const hasScore = event.home_score != null || event.away_score != null;
-  const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
+  const API =
+    typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
   return (
     <>
       <script

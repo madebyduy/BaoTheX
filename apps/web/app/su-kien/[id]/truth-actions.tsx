@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
+const API =
+  typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 
 export function TruthCenterActions({
   clusterId,

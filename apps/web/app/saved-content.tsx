@@ -5,7 +5,8 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { articleHref, type Item } from "./lib";
 
-const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
+const API =
+  typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 type Collection = { id: number; name: string; created_at: string };
 
 export function SavedContent() {
