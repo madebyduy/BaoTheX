@@ -175,7 +175,12 @@ func cors(origins []string, next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			// ngrok-skip-browser-warning lets the browser bypass the free-tier ngrok
+			// interstitial (an HTML warning page served without CORS headers, which
+			// otherwise blocks every credentialed fetch from the deployed frontend).
+			// It is a custom header, so listing it here keeps the CORS preflight from
+			// failing when the client sends it.
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

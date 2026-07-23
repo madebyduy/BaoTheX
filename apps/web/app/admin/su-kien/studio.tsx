@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import type { Sport, SportsEvent } from "../../lib";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
 
 export function AdminSportsStudio({
   sports,

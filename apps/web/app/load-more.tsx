@@ -4,7 +4,7 @@ import { useState } from "react";
 import { type Item } from "./lib";
 import { Card } from "./ui";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
 
 // LoadMore renders a content grid that grows in place. It seeds from the
 // server-rendered first page (good for SEO and first paint) and fetches further

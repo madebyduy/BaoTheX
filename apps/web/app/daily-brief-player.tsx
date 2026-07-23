@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { type AudioTrack, usePersistentAudio } from "./persistent-audio-player";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
 type Edition = "morning" | "evening";
 type Brief = {
   title: string;

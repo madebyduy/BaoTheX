@@ -163,12 +163,15 @@ export type FanPassport = {
   points: number;
   badges: string[];
 };
-// Server-rendered requests use Docker's private service address when present;
-// browser components continue to use the public URL baked into the bundle.
+// Browser requests go to the same-origin /api proxy (app/api/[...path]/route.ts),
+// which forwards to the backend server-side. That avoids the ngrok interstitial
+// and cross-site CORS that otherwise break every client call once deployed.
+// Server-rendered requests talk to the backend directly, preferring Docker's
+// private service address when present.
 const API =
-  (typeof window === "undefined" && process.env.API_INTERNAL_URL) ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:8081";
+  typeof window !== "undefined"
+    ? ""
+    : process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 function safeFallback<T>(fallback: T): T {

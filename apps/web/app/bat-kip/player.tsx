@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { articleHref, type Item } from "../lib";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
 
 export function CatchUpPlayer({
   items,

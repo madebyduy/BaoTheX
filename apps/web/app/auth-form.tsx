@@ -15,7 +15,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     setSubmitting(true);
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081"}/api/v1/auth/${mode}`,
+        `${(typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081")}/api/v1/auth/${mode}`,
         {
           method: "POST",
           credentials: "include",

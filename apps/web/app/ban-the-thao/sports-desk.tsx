@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { articleHref, type Item, type SportsEvent } from "../lib";
 import { SportsEventCard } from "../sports-event-card";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
 const DEFAULT = [
   "today",
   "catch_up",

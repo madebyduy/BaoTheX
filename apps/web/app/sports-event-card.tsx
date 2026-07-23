@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { SportsEvent } from "./lib";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
 
 // LiveEventRefresh keeps a live match page current without a manual reload. For
 // an in-progress (or imminent) event it re-renders the server component every

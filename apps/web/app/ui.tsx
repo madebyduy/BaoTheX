@@ -12,7 +12,7 @@ export function RemoteImage({ alt, ...props }: Omit<ImageProps, "width" | "heigh
   return <Image {...props} alt={alt} width={1200} height={675} unoptimized />;
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081";
+const API = (typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081");
 
 type HeaderUser = {
   email: string;
