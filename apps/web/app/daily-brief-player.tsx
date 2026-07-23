@@ -82,7 +82,7 @@ function BriefCard({ edition, time, brief }: { edition: Edition; time: string; b
   const audioTrack: AudioTrack | null = brief?.audio_url
     ? {
         id: `daily-brief:${edition}:${brief.brief_date}`,
-        src: brief.audio_url,
+        src: audioSource(brief.audio_url),
         title: brief.title,
         subtitle: `${edition === "morning" ? "Bản tin 6h" : "Bản tin 20h"} · Báo Thể Ích`,
         href: "/",
@@ -117,4 +117,14 @@ function BriefCard({ edition, time, brief }: { edition: Edition; time: string; b
       )}
     </div>
   );
+}
+
+function audioSource(value: string) {
+  try {
+    const url = new URL(value, window.location.origin);
+    if (url.pathname.startsWith("/media/")) return `${url.pathname}${url.search}`;
+  } catch {
+    // Keep provider URLs unchanged when they are not local media paths.
+  }
+  return value;
 }

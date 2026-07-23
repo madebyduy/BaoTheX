@@ -71,7 +71,7 @@ export function PersistentAudioProvider({ children }: { children: React.ReactNod
     (nextTrack: AudioTrack) => {
       const audio = audioRef.current;
       if (!audio) return;
-      if (track?.id === nextTrack.id) {
+      if (track?.id === nextTrack.id && track.src === nextTrack.src) {
         if (audio.paused) startPlayback(audio);
         else audio.pause();
         return;

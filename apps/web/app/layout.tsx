@@ -52,6 +52,13 @@ export const metadata: Metadata = {
   description: DESCRIPTION,
   applicationName: "BaoTheX",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icon.png", type: "image/png", sizes: "512x512" },
+      { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
+    ],
+    apple: "/icon-192.png",
+  },
   appleWebApp: { capable: true, title: "BaoTheX", statusBarStyle: "black-translucent" },
   alternates: {
     canonical: "/",
