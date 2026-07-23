@@ -172,7 +172,7 @@ func (s *Server) sessionCookie(token string, expires time.Time) *http.Cookie {
 		Expires:  expires,
 		HttpOnly: true,
 		Secure:   s.secureCookies(),
-		SameSite: http.SameSiteLaxMode,
+		SameSite: s.sameSiteMode(),
 	}
 }
 
@@ -184,13 +184,28 @@ func (s *Server) clearCookie() *http.Cookie {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   s.secureCookies(),
-		SameSite: http.SameSiteLaxMode,
+		SameSite: s.sameSiteMode(),
 	}
 }
 
 // secureCookies enables the Secure flag when the public URL is https.
 func (s *Server) secureCookies() bool {
 	return strings.HasPrefix(s.cfg.PublicBaseURL, "https://")
+}
+
+// sameSiteMode picks the session cookie's SameSite policy. In production the
+// browser frontend and this API live on different sites (e.g. the Cloudflare
+// Worker origin vs. the API tunnel), so the credentialed /auth/* fetches are
+// cross-site. A Lax cookie is silently dropped on those responses, which made
+// login "succeed" without ever persisting a session once deployed. SameSite=None
+// lets the browser store and send it cross-site — it requires Secure, which is
+// exactly when secureCookies() is true. Over plain http (local dev, same-site
+// localhost) None+Secure would be rejected, so fall back to Lax there.
+func (s *Server) sameSiteMode() http.SameSite {
+	if s.secureCookies() {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
 }
 
 func validEmail(value string) bool {
